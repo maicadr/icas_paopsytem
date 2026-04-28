@@ -2,15 +2,12 @@
 session_start();
 include "db.php";
 
-/* ── LOGOUT ── */
 if(isset($_GET['logout'])){
     session_unset(); session_destroy();
     setcookie('user_id','',time()-3600,"/");
     setcookie('role','',time()-3600,"/");
     header("Location: index.php"); exit();
 }
-
-/* ── SESSION + TIMEOUT ── */
 $timeout=1800;
 if(!isset($_SESSION['user_id'])){
     if(isset($_COOKIE['user_id'])&&isset($_COOKIE['role'])){
@@ -30,8 +27,6 @@ if(!isset($_SESSION['user_id'])){
 if(!isset($_SESSION['role'])||$_SESSION['role']!='admin'){ header("Location: index.php"); exit(); }
 $admin_id=(int)$_SESSION['user_id'];
 
-/* ==================== POST HANDLERS ==================== */
-
 if(isset($_POST['add_class'])){
     $cname=trim($_POST['class_name']);
     if($cname!==''){
@@ -42,26 +37,22 @@ if(isset($_POST['add_class'])){
     } else { $flash="Class name required."; $ft='error'; }
     header("Location: admin_dashboard.php?section=classes&flash=".urlencode($flash)."&ft=$ft"); exit();
 }
-
 if(isset($_POST['delete_class'])){
     $cid=(int)$_POST['class_id'];
     $s=$conn->prepare("DELETE FROM classes WHERE id=?");
     $s->bind_param("i",$cid); $s->execute();
     header("Location: admin_dashboard.php?section=classes&flash=".urlencode("Class deleted.")."&ft=success"); exit();
 }
-
 if(isset($_POST['enroll_student'])){
     $cid=(int)$_POST['class_id'];
     $sids=isset($_POST['student_ids'])?$_POST['student_ids']:[];
-    if($cid===0||empty($sids)){
-        $flash="Please select a class and at least one student."; $ft='error';
-    } else {
+    if($cid===0||empty($sids)){ $flash="Please select a class and at least one student."; $ft='error'; }
+    else {
         $enrolled_count=0; $skip_count=0;
         $chk=$conn->prepare("SELECT id FROM enrollments WHERE student_id=? AND class_id=?");
         $ins=$conn->prepare("INSERT INTO enrollments(student_id,class_id) VALUES(?,?)");
         foreach($sids as $sid_raw){
-            $sid=(int)$sid_raw;
-            if($sid===0) continue;
+            $sid=(int)$sid_raw; if($sid===0) continue;
             $chk->bind_param("ii",$sid,$cid); $chk->execute(); $chk->store_result();
             if($chk->num_rows>0){ $skip_count++; $chk->free_result(); continue; }
             $chk->free_result();
@@ -80,18 +71,14 @@ if(isset($_POST['enroll_student'])){
     }
     header("Location: admin_dashboard.php?section=classes&flash=".urlencode($flash)."&ft=$ft"); exit();
 }
-
 if(isset($_POST['unenroll_student'])){
     $eid=(int)$_POST['enrollment_id'];
     $s=$conn->prepare("DELETE FROM enrollments WHERE id=?");
     $s->bind_param("i",$eid); $s->execute();
     header("Location: admin_dashboard.php?section=classes&flash=".urlencode("Student removed from class.")."&ft=success"); exit();
 }
-
 if(isset($_POST['update_student'])){
-    $pid=(int)$_POST['person_id'];
-    $fn=trim($_POST['fullname']);
-    $em=trim($_POST['email']);
+    $pid=(int)$_POST['person_id']; $fn=trim($_POST['fullname']); $em=trim($_POST['email']);
     if($fn&&$em){
         $s=$conn->prepare("UPDATE people SET fullname=?,email=? WHERE id=? AND role='user'");
         $s->bind_param("ssi",$fn,$em,$pid); $s->execute();
@@ -99,14 +86,11 @@ if(isset($_POST['update_student'])){
     } else { $flash="Name and email required."; $ft='error'; }
     header("Location: admin_dashboard.php?section=classes&flash=".urlencode($flash)."&ft=$ft"); exit();
 }
-
 if(isset($_POST['add_activity'])){
-    $cid=(int)$_POST['class_id'];
-    $aname=trim($_POST['activity_name']);
+    $cid=(int)$_POST['class_id']; $aname=trim($_POST['activity_name']);
     if($cid&&$aname!==''){
         $enr=$conn->prepare("SELECT id FROM enrollments WHERE class_id=?");
-        $enr->bind_param("i",$cid); $enr->execute();
-        $enr_res=$enr->get_result();
+        $enr->bind_param("i",$cid); $enr->execute(); $enr_res=$enr->get_result();
         if($enr_res->num_rows===0){ $flash="No students enrolled in that class yet."; $ft='error'; }
         else {
             $ins=$conn->prepare("INSERT INTO activities(enrollment_id,activity_name,completed) VALUES(?,?,0)");
@@ -122,32 +106,26 @@ if(isset($_POST['add_activity'])){
     } else { $flash="Select a class and enter an activity name."; $ft='error'; }
     header("Location: admin_dashboard.php?section=activities&flash=".urlencode($flash)."&ft=$ft"); exit();
 }
-
 if(isset($_POST['update_activity'])){
-    $aid=(int)$_POST['activity_id'];
-    $done=isset($_POST['completed'])?1:0;
+    $aid=(int)$_POST['activity_id']; $done=isset($_POST['completed'])?1:0;
     $s=$conn->prepare("UPDATE activities SET completed=? WHERE id=?");
     $s->bind_param("ii",$done,$aid); $s->execute();
     header("Location: admin_dashboard.php?section=activities"); exit();
 }
-
 if(isset($_POST['delete_activity'])){
     $aid=(int)$_POST['activity_id'];
     $s=$conn->prepare("DELETE FROM activities WHERE id=?");
     $s->bind_param("i",$aid); $s->execute();
     header("Location: admin_dashboard.php?section=activities&flash=".urlencode("Activity deleted.")."&ft=success"); exit();
 }
-
 if(isset($_POST['delete_class_activity'])){
     $cid=(int)$_POST['class_id'];
     $aname=$conn->real_escape_string(trim($_POST['activity_name']));
     $conn->query("DELETE a FROM activities a JOIN enrollments e ON a.enrollment_id=e.id WHERE e.class_id=$cid AND a.activity_name='$aname'");
     header("Location: admin_dashboard.php?section=activities&flash=".urlencode("Activity removed from all students.")."&ft=success"); exit();
 }
-
 if(isset($_POST['add_reminder'])){
-    $title=trim($_POST['reminder_title']);
-    $body=trim($_POST['reminder_body']);
+    $title=trim($_POST['reminder_title']); $body=trim($_POST['reminder_body']);
     $target=$_POST['target_role']??'user';
     $due=!empty($_POST['due_date'])?$_POST['due_date']:null;
     $rcid=!empty($_POST['reminder_class_id'])?(int)$_POST['reminder_class_id']:null;
@@ -160,19 +138,16 @@ if(isset($_POST['add_reminder'])){
             $s=$conn->prepare("INSERT INTO reminders(title,body,target_role,due_date,created_by) VALUES(?,?,?,?,?)");
             $s->bind_param("ssssi",$title,$body,$target,$due,$admin_id);
         }
-        $s->execute();
-        $flash="Reminder posted."; $ft='success';
+        $s->execute(); $flash="Reminder posted."; $ft='success';
     } else { $flash="Title required."; $ft='error'; }
     header("Location: admin_dashboard.php?section=reminders&flash=".urlencode($flash)."&ft=$ft"); exit();
 }
-
 if(isset($_POST['delete_reminder'])){
     $rid=(int)$_POST['reminder_id'];
     $s=$conn->prepare("DELETE FROM reminders WHERE id=?");
     $s->bind_param("i",$rid); $s->execute();
     header("Location: admin_dashboard.php?section=reminders&flash=".urlencode("Reminder deleted.")."&ft=success"); exit();
 }
-
 if(isset($_POST['save_grades'])){
     $eid=(int)$_POST['enrollment_id'];
     $p=floatval($_POST['prelim']); $m=floatval($_POST['midterm']); $f=floatval($_POST['final']);
@@ -190,7 +165,6 @@ if(isset($_POST['save_grades'])){
     header("Location: admin_dashboard.php?section=grades&flash=".urlencode("Grades saved.")."&ft=success"); exit();
 }
 
-/* ── FETCH ADMIN ── */
 $stmt=$conn->prepare("SELECT fullname FROM people WHERE id=?");
 $stmt->bind_param("i",$admin_id); $stmt->execute();
 $admin=$stmt->get_result()->fetch_assoc();
@@ -201,16 +175,13 @@ $search=$_GET['search']??'';
 $flash=isset($_GET['flash'])?htmlspecialchars(urldecode($_GET['flash'])):'';
 $flash_type=$_GET['ft']??'success';
 
-/* ── FETCH DATA ── */
 if($search){
     $s=$conn->prepare("SELECT id,fullname,email FROM people WHERE role='user' AND fullname LIKE ? ORDER BY fullname");
     $lk="%$search%"; $s->bind_param("s",$lk);
 } else {
     $s=$conn->prepare("SELECT id,fullname,email FROM people WHERE role='user' ORDER BY fullname");
 }
-$s->execute();
-$students_arr=[];
-$res=$s->get_result();
+$s->execute(); $students_arr=[]; $res=$s->get_result();
 while($r=$res->fetch_assoc()) $students_arr[]=$r;
 $total_students=count($students_arr);
 
@@ -220,50 +191,14 @@ while($r=$res->fetch_assoc()) $classes_arr[]=$r;
 $total_classes=count($classes_arr);
 
 $enrollments_by_class=[];
-$eq=$conn->query("
-    SELECT e.id AS eid, e.class_id, e.student_id,
-           p.id AS pid, p.fullname, p.email, c.class_name
-    FROM enrollments e
-    JOIN people p ON p.id=e.student_id
-    JOIN classes c ON c.id=e.class_id
-    ORDER BY c.class_name, p.fullname
-");
+$eq=$conn->query("SELECT e.id AS eid,e.class_id,e.student_id,p.id AS pid,p.fullname,p.email,c.class_name FROM enrollments e JOIN people p ON p.id=e.student_id JOIN classes c ON c.id=e.class_id ORDER BY c.class_name,p.fullname");
 if($eq){ while($r=$eq->fetch_assoc()){ $enrollments_by_class[$r['class_id']][]=$r; } }
 
-/* Grades — fetched into PHP array grouped by class_name */
-$grades_raw=$conn->query("
-    SELECT e.id AS enrollment_id, p.fullname, c.class_name,
-           COALESCE(g.prelim,0) AS prelim, COALESCE(g.midterm,0) AS midterm,
-           COALESCE(g.final,0) AS final, COALESCE(g.average,0) AS average,
-           COALESCE(g.status,'') AS status
-    FROM enrollments e
-    JOIN people p ON p.id=e.student_id
-    JOIN classes c ON c.id=e.class_id
-    LEFT JOIN grades g ON g.enrollment_id=e.id
-    ORDER BY c.class_name, p.fullname
-");
+$grades_raw=$conn->query("SELECT e.id AS enrollment_id,p.fullname,c.class_name,COALESCE(g.prelim,0) AS prelim,COALESCE(g.midterm,0) AS midterm,COALESCE(g.final,0) AS final,COALESCE(g.average,0) AS average,COALESCE(g.status,'') AS status FROM enrollments e JOIN people p ON p.id=e.student_id JOIN classes c ON c.id=e.class_id LEFT JOIN grades g ON g.enrollment_id=e.id ORDER BY c.class_name,p.fullname");
 $grades_by_class=[];
 if($grades_raw){ while($r=$grades_raw->fetch_assoc()){ $grades_by_class[$r['class_name']][]=$r; } }
 
-$result_activities=$conn->query("
-    SELECT a.id AS activity_id, p.fullname, c.class_name, c.id AS class_id,
-           a.activity_name, a.completed, e.id AS enrollment_id
-    FROM enrollments e
-    JOIN people p ON p.id=e.student_id
-    JOIN classes c ON c.id=e.class_id
-    JOIN activities a ON a.enrollment_id=e.id
-    ORDER BY c.class_name,a.activity_name,p.fullname
-");
-
-$result_class_acts=$conn->query("
-    SELECT c.id AS class_id, c.class_name, a.activity_name,
-           COUNT(a.id) AS total, SUM(a.completed) AS done
-    FROM activities a
-    JOIN enrollments e ON a.enrollment_id=e.id
-    JOIN classes c ON c.id=e.class_id
-    GROUP BY c.id,a.activity_name
-    ORDER BY c.class_name,a.activity_name
-");
+$result_activities=$conn->query("SELECT a.id AS activity_id,p.fullname,c.class_name,c.id AS class_id,a.activity_name,a.completed,e.id AS enrollment_id FROM enrollments e JOIN people p ON p.id=e.student_id JOIN classes c ON c.id=e.class_id JOIN activities a ON a.enrollment_id=e.id ORDER BY c.class_name,a.activity_name,p.fullname");
 
 $col=$conn->query("SHOW COLUMNS FROM reminders LIKE 'class_id'");
 $has_class_id=($col&&$col->num_rows>0);
@@ -280,97 +215,69 @@ $comp_acts=$conn->query("SELECT COUNT(*) c FROM activities WHERE completed=1")->
 $pend_acts=$conn->query("SELECT COUNT(*) c FROM activities WHERE completed=0")->fetch_assoc()['c'];
 $total_reminders=$conn->query("SELECT COUNT(*) c FROM reminders")->fetch_assoc()['c'];
 
-$perf_result=$conn->query("
-    SELECT p.fullname,p.email,
-           COUNT(DISTINCT e.class_id) AS classes_count,
-           ROUND(AVG(g.average),1) AS gpa,
-           SUM(CASE WHEN g.average>=75 THEN 1 ELSE 0 END) AS passed_count,
-           SUM(CASE WHEN g.average>0 AND g.average<75 THEN 1 ELSE 0 END) AS failed_count,
-           SUM(CASE WHEN a.completed=1 THEN 1 ELSE 0 END) AS acts_done,
-           COUNT(a.id) AS acts_total
-    FROM people p
-    LEFT JOIN enrollments e ON e.student_id=p.id
-    LEFT JOIN grades g ON g.enrollment_id=e.id
-    LEFT JOIN activities a ON a.enrollment_id=e.id
-    WHERE p.role='user'
-    GROUP BY p.id ORDER BY gpa DESC
-");
+$perf_result=$conn->query("SELECT p.fullname,p.email,COUNT(DISTINCT e.class_id) AS classes_count,ROUND(AVG(g.average),1) AS gpa,SUM(CASE WHEN g.average>=75 THEN 1 ELSE 0 END) AS passed_count,SUM(CASE WHEN g.average>0 AND g.average<75 THEN 1 ELSE 0 END) AS failed_count,SUM(CASE WHEN a.completed=1 THEN 1 ELSE 0 END) AS acts_done,COUNT(a.id) AS acts_total FROM people p LEFT JOIN enrollments e ON e.student_id=p.id LEFT JOIN grades g ON g.enrollment_id=e.id LEFT JOIN activities a ON a.enrollment_id=e.id WHERE p.role='user' GROUP BY p.id ORDER BY gpa DESC");
 
 $chart_classes=[]; $chart_avgs=[]; $enroll_per_class=[];
 $tmp=$conn->query("SELECT c.class_name,ROUND(AVG(g.average),1) AS avg,COUNT(DISTINCT e.id) AS ecnt FROM classes c LEFT JOIN enrollments e ON e.class_id=c.id LEFT JOIN grades g ON g.enrollment_id=e.id GROUP BY c.id ORDER BY c.class_name");
 while($r=$tmp->fetch_assoc()){ $chart_classes[]=$r['class_name']; $chart_avgs[]=$r['avg']??0; $enroll_per_class[]=$r['ecnt']; }
 ?>
 <!DOCTYPE html>
-<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Admin Dashboard — PAOPS</title>
+<script>
+/* ANTI-FOUC — runs before any CSS, eliminates theme flash on refresh */
+(function(){
+  try{
+    var t=localStorage.getItem('paops_theme')||'dark';
+    var c=localStorage.getItem('paops_accent')||'#4facfe';
+    document.documentElement.setAttribute('data-theme',t);
+    document.documentElement.style.setProperty('--ap',c);
+  }catch(e){}
+})();
+</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 <style>
-/* ── THEME VARIABLES ── */
 :root{
-  /* Dark (default) */
-  --bg:#050d1a; --card:rgba(0,255,255,0.04);
-  --bdr:rgba(0,255,255,0.10); --bdr2:rgba(0,255,255,0.09);
-  --txt:#e0f7ff; --muted:rgba(0,255,255,0.45); --dim:rgba(255,255,255,0.55);
-  --acc:#00ffff; --ap:#4facfe;
-  --topbg:rgba(0,255,255,0.05); --rhov:rgba(0,255,255,0.03);
-  --thead:rgba(79,172,254,0.05); --th:#4facfe;
-  --ibg:rgba(0,0,0,0.45); --ibdr:rgba(0,255,255,0.18);
-  --pbg:rgba(255,255,255,0.07);
-  /* Semantic colour tokens */
-  --title-color:#00ffff;
-  --card-title-color:rgba(0,255,255,0.50);
-  --grp-name-color:#00ffff;
-  --ri-title-color:#00ffff;
-  --cb-title-color:#00ffff;
-  --modal-title-color:#00ffff;
-  --chart-grid:rgba(0,255,255,0.05);
-  --chart-label:rgba(0,210,255,0.60);
-  /* Sidebar dark */
-  --sb:#020816;
-  --sb-bdr:rgba(0,255,255,0.12);
-  --sb-txt:rgba(200,225,255,0.65);
-  --sb-txt-active:#4facfe;
-  --sb-label:rgba(0,255,255,0.35);
-  --sb-hover-bg:rgba(79,172,254,0.10);
-  --sb-active-bg:rgba(79,172,254,0.15);
-  --sb-brand-title:#4facfe;
-  --sb-brand-sub:rgba(150,200,255,0.45);
-  --sb-brand-name:rgba(200,225,255,0.65);
+  --bg:#050d1a;--card:rgba(0,255,255,0.04);
+  --bdr:rgba(0,255,255,0.10);--bdr2:rgba(0,255,255,0.09);
+  --txt:#e0f7ff;--muted:rgba(0,255,255,0.45);--dim:rgba(255,255,255,0.55);
+  --ap:#4facfe;--topbg:rgba(0,255,255,0.05);
+  --rhov:rgba(0,255,255,0.03);--thead:rgba(79,172,254,0.05);--th:#4facfe;
+  --ibg:rgba(0,0,0,0.45);--ibdr:rgba(0,255,255,0.18);--pbg:rgba(255,255,255,0.07);
+  --title-color:#00ffff;--card-title-color:rgba(0,255,255,0.50);
+  --grp-name-color:#00ffff;--ri-title-color:#00ffff;
+  --cb-title-color:#00ffff;--modal-title-color:#00ffff;
+  --act-done-bg:rgba(46,204,113,0.07);--act-done-bdr:rgba(46,204,113,0.22);
+  --act-pend-bg:rgba(255,211,42,0.06);--act-pend-bdr:rgba(255,211,42,0.20);
+  --act-row-bg:rgba(255,255,255,0.03);
+  --sb:#020816;--sb-bdr:rgba(0,255,255,0.12);
+  --sb-txt:rgba(200,225,255,0.65);--sb-txt-active:#4facfe;
+  --sb-label:rgba(0,255,255,0.35);--sb-hover-bg:rgba(79,172,254,0.10);
+  --sb-active-bg:rgba(79,172,254,0.15);--sb-brand-title:#4facfe;
+  --sb-brand-sub:rgba(150,200,255,0.45);--sb-brand-name:rgba(200,225,255,0.65);
 }
 [data-theme="light"]{
-  --bg:#eef2ff; --card:#ffffff;
-  --bdr:rgba(79,122,254,0.18); --bdr2:rgba(79,122,254,0.13);
-  --txt:#1a1f3c; --muted:rgba(60,80,180,0.6); --dim:rgba(26,31,60,0.65);
-  --acc:#1a3bbf; --ap:#2563eb;
-  --topbg:#ffffff; --rhov:rgba(79,122,254,0.04);
-  --thead:rgba(79,122,254,0.06); --th:#2563eb;
-  --ibg:#f5f8ff; --ibdr:rgba(79,122,254,0.22);
-  --pbg:rgba(0,0,0,0.07);
-  /* Semantic colour tokens — light overrides */
-  --title-color:#1a3bbf;
-  --card-title-color:rgba(50,70,180,0.65);
-  --grp-name-color:#1a3bbf;
-  --ri-title-color:#1a3bbf;
-  --cb-title-color:#1a3bbf;
-  --modal-title-color:#1a3bbf;
-  --chart-grid:rgba(79,100,220,0.10);
-  --chart-label:rgba(50,70,180,0.65);
-  /* Sidebar light — deep navy so text stays white & readable */
-  --sb:#1e2a5e;
-  --sb-bdr:rgba(79,120,255,0.25);
-  --sb-txt:rgba(200,215,255,0.75);
-  --sb-txt-active:#ffffff;
-  --sb-label:rgba(140,170,255,0.55);
-  --sb-hover-bg:rgba(255,255,255,0.10);
-  --sb-active-bg:rgba(79,172,254,0.25);
-  --sb-brand-title:#7eb8ff;
-  --sb-brand-sub:rgba(150,185,255,0.55);
-  --sb-brand-name:rgba(200,215,255,0.70);
+  --bg:#eef2ff;--card:#ffffff;
+  --bdr:rgba(79,122,254,0.18);--bdr2:rgba(79,122,254,0.13);
+  --txt:#1a1f3c;--muted:rgba(60,80,180,0.6);--dim:rgba(26,31,60,0.65);
+  --ap:#2563eb;--topbg:#ffffff;
+  --rhov:rgba(79,122,254,0.04);--thead:rgba(79,122,254,0.06);--th:#2563eb;
+  --ibg:#f5f8ff;--ibdr:rgba(79,122,254,0.22);--pbg:rgba(0,0,0,0.07);
+  --title-color:#1a3bbf;--card-title-color:rgba(50,70,180,0.65);
+  --grp-name-color:#1a3bbf;--ri-title-color:#1a3bbf;
+  --cb-title-color:#1a3bbf;--modal-title-color:#1a3bbf;
+  --act-done-bg:rgba(22,163,74,0.07);--act-done-bdr:rgba(22,163,74,0.24);
+  --act-pend-bg:rgba(234,179,8,0.07);--act-pend-bdr:rgba(234,179,8,0.24);
+  --act-row-bg:#f8faff;
+  --sb:#1e2a5e;--sb-bdr:rgba(79,120,255,0.25);
+  --sb-txt:rgba(200,215,255,0.75);--sb-txt-active:#ffffff;
+  --sb-label:rgba(140,170,255,0.55);--sb-hover-bg:rgba(255,255,255,0.10);
+  --sb-active-bg:rgba(79,172,254,0.25);--sb-brand-title:#7eb8ff;
+  --sb-brand-sub:rgba(150,185,255,0.55);--sb-brand-name:rgba(200,215,255,0.70);
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 body,html{height:100%;font-family:'Rajdhani',sans-serif;background:var(--bg);color:var(--txt);overflow:hidden;transition:background .3s,color .3s;}
@@ -402,12 +309,10 @@ body,html{height:100%;font-family:'Rajdhani',sans-serif;background:var(--bg);col
 .tb-right a:hover{background:#c0392b;}
 .settings-btn{background:rgba(79,172,254,.12);border:1px solid rgba(79,172,254,.28);color:var(--ap);padding:7px 12px;border-radius:8px;font-size:.8rem;cursor:pointer;font-family:'Rajdhani',sans-serif;font-weight:700;display:inline-flex;align-items:center;gap:5px;transition:.2s;flex-shrink:0;}
 .settings-btn:hover{background:rgba(79,172,254,.22);}
-/* FLASH */
 .flash{padding:9px 14px;border-radius:9px;margin-bottom:14px;font-weight:600;font-size:.88rem;display:flex;align-items:center;gap:8px;animation:fu .3s ease;}
 .flash.success{background:rgba(46,204,113,.13);border:1px solid rgba(46,204,113,.3);color:#2ecc71;}
 .flash.error{background:rgba(255,71,87,.13);border:1px solid rgba(255,71,87,.3);color:#ff6b81;}
 @keyframes fu{from{opacity:0;transform:translateY(-6px);}to{opacity:1;transform:translateY(0);}}
-/* STATS */
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:11px;margin-bottom:18px;}
 .stat-card{background:var(--card);border:1px solid var(--bdr);border-radius:12px;padding:14px 10px;text-align:center;transition:transform .2s,background .3s;}
 .stat-card:hover{transform:translateY(-2px);}
@@ -416,7 +321,6 @@ body,html{height:100%;font-family:'Rajdhani',sans-serif;background:var(--bg);col
 .c-blue .stat-icon,.c-blue .stat-val{color:var(--ap);}.c-green .stat-icon,.c-green .stat-val{color:#2ecc71;}
 .c-red .stat-icon,.c-red .stat-val{color:#ff6b81;}.c-gold .stat-icon,.c-gold .stat-val{color:#ffd32a;}
 .c-purple .stat-icon,.c-purple .stat-val{color:#a29bfe;}.c-teal .stat-icon,.c-teal .stat-val{color:#00cec9;}
-/* CARD */
 .card{background:var(--card);border:1px solid var(--bdr2);border-radius:13px;padding:16px;margin-bottom:18px;overflow-x:auto;transition:background .3s;}
 .card-title{font-weight:700;font-size:.8rem;text-transform:uppercase;letter-spacing:1px;color:var(--card-title-color);margin-bottom:13px;display:flex;align-items:center;gap:7px;}
 .form-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;align-items:end;}
@@ -426,7 +330,6 @@ body,html{height:100%;font-family:'Rajdhani',sans-serif;background:var(--bg);col
 .field textarea{resize:vertical;min-height:68px;}
 .field input:focus,.field select:focus,.field textarea:focus{border-color:var(--ap);}
 .field select option{background:var(--sb);color:var(--txt);}
-/* BUTTONS */
 .btn{padding:8px 14px;border:none;border-radius:8px;cursor:pointer;font-family:'Rajdhani',sans-serif;font-weight:700;font-size:.82rem;transition:all .2s;display:inline-flex;align-items:center;gap:5px;}
 .btn-primary{background:linear-gradient(135deg,#4facfe,#00c6ff);color:#050d1a;}
 .btn-primary:hover{opacity:.88;transform:translateY(-1px);}
@@ -437,7 +340,6 @@ body,html{height:100%;font-family:'Rajdhani',sans-serif;background:var(--bg);col
 .btn-warn{background:rgba(255,211,42,.16);color:#ffd32a;border:1px solid rgba(255,211,42,.28);}
 .btn-warn:hover{background:rgba(255,211,42,.28);}
 .btn-sm{padding:5px 9px;font-size:.75rem;}
-/* TABLE */
 table{width:100%;border-collapse:collapse;min-width:460px;}
 th,td{padding:9px 10px;text-align:center;border-bottom:1px solid var(--bdr);white-space:nowrap;}
 th{color:var(--th);font-size:.72rem;text-transform:uppercase;letter-spacing:.5px;background:var(--thead);}
@@ -445,30 +347,27 @@ td{color:var(--dim);font-size:.86rem;}
 tr:hover td{background:var(--rhov);}
 .badge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:.7rem;font-weight:700;text-transform:uppercase;}
 .b-green{background:rgba(46,204,113,.14);color:#2ecc71;}.b-red{background:rgba(255,107,129,.14);color:#ff6b81;}
-.b-blue{background:rgba(79,172,254,.14);color:var(--ap);}.b-gold{background:rgba(255,211,42,.14);color:#ffd32a;}
+.b-blue{background:rgba(79,172,254,.14);color:var(--ap);}.b-gold{background:rgba(255,211,42,.14);color:#e6b800;}
+[data-theme="light"] .b-gold{color:#8a6500;}
 input[type="number"]{width:66px;padding:5px;border-radius:6px;border:1px solid var(--ibdr);background:var(--ibg);color:var(--ap);text-align:center;font-size:.83rem;outline:none;}
 .toggle{display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:.8rem;color:var(--dim);}
 input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:pointer;}
-/* PROGRESS */
 .pbar{background:var(--pbg);border-radius:20px;overflow:hidden;height:7px;margin-top:3px;min-width:70px;}
 .pbar-inner{height:7px;border-radius:20px;transition:width .4s;}
 .pbar-green .pbar-inner{background:linear-gradient(90deg,#2ecc71,#00b894);}
 .pbar-red .pbar-inner{background:linear-gradient(90deg,#ff6b81,#ff4757);}
 .pbar-blue .pbar-inner{background:linear-gradient(90deg,#4facfe,#00c6ff);}
-/* CHARTS */
 .chart-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-bottom:18px;}
 .chart-card{background:var(--card);border:1px solid var(--bdr2);border-radius:13px;padding:16px;}
 .chart-card h3{font-size:.72rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);margin-bottom:12px;}
-/* SECTIONS */
 .section{display:none;}
 .section.active{display:block;animation:fu .25s ease both;}
 .sec-title{font-family:'Orbitron',sans-serif;font-size:.9rem;letter-spacing:2px;color:var(--title-color);margin-bottom:14px;padding-bottom:9px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:9px;}
 .sec-title i{color:var(--ap);}
 .avg-hi{color:#2ecc71;font-weight:700;}.avg-mid{color:#ffd32a;font-weight:700;}.avg-lo{color:#ff6b81;font-weight:700;}
-/* INFO NOTE */
 .info-note{font-size:.8rem;color:var(--muted);margin-bottom:12px;display:flex;align-items:center;gap:7px;}
 .info-note i{color:var(--ap);flex-shrink:0;}
-/* GROUP BLOCKS (grades/activities/reminders by class) */
+/* GROUP BLOCKS */
 .grp-block{margin-bottom:18px;border-radius:13px;overflow:hidden;border:1px solid var(--bdr);}
 .grp-head{background:rgba(79,172,254,.1);padding:12px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--bdr);flex-wrap:wrap;}
 .grp-head.green{background:rgba(46,204,113,.08);border-color:rgba(46,204,113,.15);}
@@ -478,7 +377,54 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
 .grp-body{background:var(--card);overflow-x:auto;padding:12px 14px;}
 .grp-body table{min-width:420px;}
 .grp-body table th:first-child,.grp-body table td:first-child{text-align:left;}
-/* ENROLL CHECKLIST — PAGINATED */
+
+/* ═══ ACTIVITIES — REDESIGNED ═══ */
+.act-class-block{margin-bottom:16px;border-radius:13px;overflow:hidden;border:1px solid var(--bdr);}
+.act-class-head{background:rgba(79,172,254,.10);padding:13px 18px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--bdr);flex-wrap:wrap;}
+.act-class-icon{width:36px;height:36px;border-radius:9px;background:rgba(79,172,254,.15);display:flex;align-items:center;justify-content:center;color:var(--ap);font-size:.95rem;flex-shrink:0;}
+.act-class-name{font-family:'Orbitron',sans-serif;font-size:.8rem;color:var(--grp-name-color);letter-spacing:1px;flex:1;}
+.act-tag{font-size:.68rem;font-weight:700;padding:3px 10px;border-radius:20px;}
+.act-tag-done{background:rgba(46,204,113,.16);color:#2ecc71;}
+.act-tag-pend{background:rgba(255,211,42,.16);color:#e6b800;}
+[data-theme="light"] .act-tag-pend{color:#8a6500;}
+.act-sub-wrap{padding:10px 14px;background:var(--card);display:flex;flex-direction:column;gap:10px;}
+.act-sub{border-radius:10px;overflow:hidden;border:1px solid var(--bdr2);}
+.act-sub-head{display:flex;align-items:center;gap:10px;padding:9px 14px;background:rgba(79,172,254,.07);border-bottom:1px solid var(--bdr2);flex-wrap:wrap;}
+.act-sub-name{font-weight:700;font-size:.88rem;color:var(--title-color);flex:1;}
+.act-sub-tag{font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:8px;}
+/* ── per-student rows ── */
+.act-list{background:var(--card);padding:8px 12px;display:flex;flex-direction:column;gap:6px;}
+.act-row{
+  display:flex;align-items:center;
+  justify-content:space-between;
+  gap:12px;padding:10px 14px;
+  border-radius:9px;border:1px solid var(--bdr2);
+  background:var(--act-row-bg);
+  transition:border-color .15s,background .15s;
+}
+.act-row.done{background:var(--act-done-bg);border-color:var(--act-done-bdr);}
+.act-row.pending{background:var(--act-pend-bg);border-color:var(--act-pend-bdr);}
+.act-row-left{display:flex;align-items:center;gap:10px;flex:1;min-width:0;}
+.act-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
+.act-row.done    .act-dot{background:#2ecc71;box-shadow:0 0 5px rgba(46,204,113,.55);}
+.act-row.pending .act-dot{background:#ffd32a;box-shadow:0 0 5px rgba(255,211,42,.55);}
+.act-student-name{font-weight:700;font-size:.86rem;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* status pill — pinned to the right, always same width */
+.act-status-pill{
+  flex-shrink:0;
+  display:inline-flex;align-items:center;gap:5px;
+  padding:4px 12px;border-radius:20px;
+  font-size:.70rem;font-weight:700;
+  text-transform:uppercase;letter-spacing:.4px;
+  white-space:nowrap;min-width:110px;justify-content:center;
+}
+.pill-done{background:rgba(46,204,113,.15);color:#2ecc71;border:1px solid rgba(46,204,113,.30);}
+.pill-pend{background:rgba(255,211,42,.13);color:#e6b800;border:1px solid rgba(255,211,42,.28);}
+[data-theme="light"] .pill-done{color:#16a34a;}
+[data-theme="light"] .pill-pend{color:#8a6500;}
+.act-row-actions{display:flex;align-items:center;gap:7px;flex-shrink:0;}
+
+/* ENROLL */
 .enroll-wrap{display:flex;flex-direction:column;gap:12px;}
 .enroll-top{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;}
 .chk-list{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:12px;background:rgba(0,0,0,.10);border:1px solid var(--bdr);border-radius:12px;min-height:180px;}
@@ -494,7 +440,6 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
 .chk-info{flex:1;min-width:0;}
 .chk-name{display:block;font-weight:700;font-size:.86rem;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .chk-email{display:block;font-size:.70rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;}
-/* Pagination bar */
 .enroll-pg{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;}
 .pg-info{font-size:.80rem;color:var(--muted);font-weight:600;}
 .pg-controls{display:flex;align-items:center;gap:6px;}
@@ -529,29 +474,18 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
 .smr-edit input:focus{border-color:var(--ap);}
 .no-data{text-align:center;padding:22px 0;color:var(--muted);font-size:.84rem;}
 .no-data i{display:block;font-size:1.5rem;margin-bottom:6px;opacity:.4;}
-/* REMINDER ITEMS */
+/* REMINDERS */
 .ri{background:rgba(0,0,0,.08);border:1px solid var(--bdr2);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
 .ri.cls-ri{border-color:rgba(79,172,254,.22);background:rgba(79,172,254,.04);}
 .ri.glb-ri{border-color:rgba(46,204,113,.18);}
+[data-theme="light"] .ri{background:rgba(79,100,220,.03);}
 .ri-title{font-weight:700;color:var(--ri-title-color);font-size:.9rem;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
 .ri-text{color:var(--dim);font-size:.8rem;margin-top:3px;line-height:1.5;}
 .ri-meta{font-size:.68rem;color:var(--muted);margin-top:5px;display:flex;gap:12px;flex-wrap:wrap;}
 .cls-tag{background:rgba(79,172,254,.18);color:var(--ap);padding:2px 8px;border-radius:12px;font-size:.68rem;font-weight:700;}
 .all-tag{background:rgba(46,204,113,.14);color:#2ecc71;padding:2px 8px;border-radius:12px;font-size:.68rem;font-weight:700;}
 .perf-score{font-size:1.1rem;font-weight:700;}
-/* ACT ROW */
-.act-grp-del{display:flex;align-items:center;padding:6px 10px;background:rgba(0,0,0,.08);border-radius:8px;margin-bottom:5px;gap:10px;flex-wrap:wrap;border:1px solid var(--bdr);}
-.act-grp-del .aname{font-weight:700;font-size:.84rem;flex:1;color:var(--txt);}
-/* Activity sub-grouping inside a class block */
-.act-sub{margin-bottom:14px;border-radius:10px;overflow:hidden;border:1px solid var(--bdr2);}
-.act-sub:last-child{margin-bottom:0;}
-.act-sub-head{display:flex;align-items:center;gap:10px;padding:9px 14px;background:rgba(79,172,254,.07);border-bottom:1px solid var(--bdr2);flex-wrap:wrap;}
-.act-sub-name{font-weight:700;font-size:.88rem;color:var(--title-color);flex:1;}
-.act-sub-tag{font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:8px;}
-.act-sub-body table{min-width:380px;}
-.act-sub-body{background:var(--card);overflow-x:auto;}
-.act-sub-body table th:first-child,.act-sub-body table td:first-child{text-align:left;}
-/* THEME MODAL */
+/* MODAL */
 .modal-overlay{display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.6);backdrop-filter:blur(4px);align-items:center;justify-content:center;}
 .modal-overlay.open{display:flex;}
 .modal-box{background:var(--card);border:1px solid var(--bdr);border-radius:18px;padding:28px 30px;width:90%;max-width:360px;box-shadow:0 20px 60px rgba(0,0,0,.5);}
@@ -574,6 +508,7 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
   .main{padding:12px;height:calc(100vh - 58px);}
   .stats-grid{grid-template-columns:repeat(2,1fr);}
   .chart-grid{grid-template-columns:1fr;}
+  .act-row{flex-wrap:wrap;}
 }
 </style>
 </head>
@@ -581,7 +516,6 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
 <div id="particles-js"></div>
 <div class="layout">
 
-<!-- SIDEBAR -->
 <div class="sidebar">
   <div class="sb-brand">
     <i class="fas fa-shield-alt"></i>
@@ -600,12 +534,9 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
   <span class="sl">Reports</span>
   <a href="?section=performance" class="<?php echo $active_section=='performance'?'active':''; ?>"><i class="fas fa-chart-line"></i> Performance</a>
   <a href="?section=analytics"   class="<?php echo $active_section=='analytics'?'active':''; ?>"><i class="fas fa-chart-bar"></i> Analytics</a>
-  <div class="sb-foot">
-    <a href="?logout"><i class="fas fa-sign-out-alt"></i> Logout</a>
-  </div>
+  <div class="sb-foot"><a href="?logout"><i class="fas fa-sign-out-alt"></i> Logout</a></div>
 </div>
 
-<!-- MAIN -->
 <div class="main">
 <div class="topbar">
   <div>
@@ -617,7 +548,6 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
     <a href="?logout"><i class="fas fa-sign-out-alt"></i> Logout</a>
   </div>
 </div>
-
 <?php if($flash): ?>
 <div class="flash <?php echo htmlspecialchars($flash_type); ?>">
   <i class="fas <?php echo $flash_type=='success'?'fa-check-circle':'fa-exclamation-circle'; ?>"></i>
@@ -625,7 +555,7 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
 </div>
 <?php endif; ?>
 
-<!-- ══ OVERVIEW ══ -->
+<!-- OVERVIEW -->
 <div class="section <?php echo $active_section=='overview'?'active':''; ?>">
   <div class="sec-title"><i class="fas fa-tachometer-alt"></i> Dashboard Overview</div>
   <div class="stats-grid">
@@ -645,7 +575,7 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
   </div>
 </div>
 
-<!-- ══ STUDENTS ══ -->
+<!-- STUDENTS -->
 <div class="section <?php echo $active_section=='students'?'active':''; ?>">
   <div class="sec-title"><i class="fas fa-users"></i> Students</div>
   <form method="GET" style="margin-bottom:13px;"><input type="hidden" name="section" value="students">
@@ -659,10 +589,11 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
     <?php foreach($students_arr as $i=>$row): ?>
     <tr><td><?php echo $i+1; ?></td><td style="text-align:left;"><?php echo htmlspecialchars($row['fullname']); ?></td><td><?php echo htmlspecialchars($row['email']); ?></td></tr>
     <?php endforeach; ?>
+    <?php if(empty($students_arr)): ?><tr><td colspan="3" style="text-align:center;color:var(--muted);padding:20px;">No students found.</td></tr><?php endif; ?>
   </table></div>
 </div>
 
-<!-- ══ CLASSES ══ -->
+<!-- CLASSES -->
 <div class="section <?php echo $active_section=='classes'?'active':''; ?>">
   <div class="sec-title"><i class="fas fa-chalkboard"></i> Class Management</div>
   <div class="card">
@@ -679,8 +610,6 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
     <p class="info-note"><i class="fas fa-info-circle"></i> Pick a class, tick students, click <strong>Enroll Selected</strong>. Already-enrolled are skipped.</p>
     <form method="POST" action="admin_dashboard.php" id="enrollForm">
       <div class="enroll-wrap">
-
-        <!-- Top controls -->
         <div class="enroll-top">
           <div class="field" style="flex:1;min-width:200px;"><label>Class *</label>
             <select name="class_id" required>
@@ -689,16 +618,13 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
             </select>
           </div>
           <div class="field" style="flex:1;min-width:200px;"><label>Search Student</label>
-            <input type="text" id="stu_s" placeholder="Type name to filter..." oninput="enrollSearch(this.value)" autocomplete="off"
-              style="padding:8px 10px;background:var(--ibg);border:1px solid var(--ibdr);border-radius:8px;color:var(--txt);font-family:'Rajdhani',sans-serif;font-size:.88rem;width:100%;outline:none;">
+            <input type="text" id="stu_s" placeholder="Type name to filter..." oninput="enrollSearch(this.value)" autocomplete="off" style="padding:8px 10px;background:var(--ibg);border:1px solid var(--ibdr);border-radius:8px;color:var(--txt);font-family:'Rajdhani',sans-serif;font-size:.88rem;width:100%;outline:none;">
           </div>
           <div style="display:flex;align-items:flex-end;gap:7px;flex-shrink:0;">
             <button type="button" class="btn btn-primary btn-sm" onclick="pickAll(true)"><i class="fas fa-check-double"></i> All</button>
             <button type="button" class="btn btn-danger btn-sm" onclick="pickAll(false)"><i class="fas fa-times"></i> None</button>
           </div>
         </div>
-
-        <!-- Student grid — all rows rendered, pagination shows/hides via JS -->
         <div class="chk-list" id="chk_list">
           <?php if(empty($students_arr)): ?>
           <div class="chk-empty"><i class="fas fa-users"></i>No students registered yet.</div>
@@ -713,21 +639,14 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
           </div>
           <?php endforeach; endif; ?>
         </div>
-
-        <!-- Pagination -->
         <div class="enroll-pg">
           <span class="pg-info" id="pg_info">Page 1</span>
           <div class="pg-controls" id="pg_controls"></div>
         </div>
-
-        <!-- Footer -->
         <div class="enroll-footer">
           <span class="sel-cnt" id="sel_cnt">0 students selected</span>
-          <button type="submit" name="enroll_student" value="1" class="btn btn-primary">
-            <i class="fas fa-user-plus"></i> Enroll Selected
-          </button>
+          <button type="submit" name="enroll_student" value="1" class="btn btn-primary"><i class="fas fa-user-plus"></i> Enroll Selected</button>
         </div>
-
       </div>
     </form>
   </div>
@@ -785,7 +704,7 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
   </div>
 </div>
 
-<!-- ══ GRADES — grouped by class ══ -->
+<!-- GRADES -->
 <div class="section <?php echo $active_section=='grades'?'active':''; ?>">
   <div class="sec-title"><i class="fas fa-graduation-cap"></i> Grades Management</div>
   <?php if(empty($grades_by_class)): ?>
@@ -828,7 +747,7 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
   <?php endforeach; endif; ?>
 </div>
 
-<!-- ══ ACTIVITIES — grouped by class ══ -->
+<!-- ACTIVITIES — redesigned with perfectly aligned status pills -->
 <div class="section <?php echo $active_section=='activities'?'active':''; ?>">
   <div class="sec-title"><i class="fas fa-tasks"></i> Activity Management</div>
   <div class="card">
@@ -847,7 +766,6 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
     </form>
   </div>
   <?php
-  /* Group activities by class, then by activity_name */
   $result_activities->data_seek(0);
   $acts_by_class=[];
   while($row=$result_activities->fetch_assoc()){
@@ -857,21 +775,20 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
   <?php if(empty($acts_by_class)): ?>
   <div class="card" style="text-align:center;padding:28px;color:var(--muted);"><i class="fas fa-tasks" style="font-size:2rem;display:block;margin-bottom:10px;opacity:.3;"></i>No activities assigned yet.</div>
   <?php else: foreach($acts_by_class as $cls_name => $acts_grouped):
-    /* flatten for counts */
     $all_rows=array_merge(...array_values($acts_grouped));
     $done_c=count(array_filter($all_rows,fn($a)=>$a['completed']));
     $pend_c=count($all_rows)-$done_c;
     $act_count=count($acts_grouped);
   ?>
-  <div class="grp-block">
-    <div class="grp-head">
-      <i class="fas fa-chalkboard-teacher" style="color:var(--ap);"></i>
-      <span class="grp-name"><?php echo htmlspecialchars($cls_name); ?></span>
-      <span class="grp-tag" style="background:rgba(79,172,254,.15);color:var(--ap);"><?php echo $act_count; ?> activit<?php echo $act_count!=1?'ies':'y'; ?></span>
-      <span class="grp-tag" style="background:rgba(46,204,113,.14);color:#2ecc71;"><?php echo $done_c; ?> done</span>
-      <span class="grp-tag" style="background:rgba(255,211,42,.14);color:#ffd32a;"><?php echo $pend_c; ?> pending</span>
+  <div class="act-class-block">
+    <div class="act-class-head">
+      <div class="act-class-icon"><i class="fas fa-chalkboard-teacher"></i></div>
+      <span class="act-class-name"><?php echo htmlspecialchars($cls_name); ?></span>
+      <span class="act-tag" style="background:rgba(79,172,254,.15);color:var(--ap);"><?php echo $act_count; ?> activit<?php echo $act_count!=1?'ies':'y'; ?></span>
+      <span class="act-tag act-tag-done"><i class="fas fa-check"></i> <?php echo $done_c; ?> done</span>
+      <span class="act-tag act-tag-pend"><i class="fas fa-clock"></i> <?php echo $pend_c; ?> pending</span>
     </div>
-    <div style="padding:12px 14px;background:var(--card);">
+    <div class="act-sub-wrap">
       <?php foreach($acts_grouped as $act_name => $students):
         $adone=count(array_filter($students,fn($s)=>$s['completed']));
         $apend=count($students)-$adone;
@@ -882,47 +799,50 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
           <span class="act-sub-name"><?php echo htmlspecialchars($act_name); ?></span>
           <span class="act-sub-tag" style="background:rgba(79,172,254,.14);color:var(--ap);"><?php echo count($students); ?> student<?php echo count($students)!=1?'s':''; ?></span>
           <span class="act-sub-tag" style="background:rgba(46,204,113,.14);color:#2ecc71;"><?php echo $adone; ?> done</span>
-          <span class="act-sub-tag" style="background:rgba(255,211,42,.14);color:#ffd32a;"><?php echo $apend; ?> pending</span>
-          <!-- Remove entire activity from class -->
-          <form method="POST" action="admin_dashboard.php" onsubmit="return confirm('Remove &quot;<?php echo htmlspecialchars(addslashes($act_name)); ?>&quot; from ALL students in this class?');" style="margin-left:auto;flex-shrink:0;">
+          <span class="act-sub-tag" style="background:rgba(255,211,42,.14);color:#e6b800;"><?php echo $apend; ?> pending</span>
+          <form method="POST" action="admin_dashboard.php" onsubmit="return confirm('Remove &quot;<?php echo htmlspecialchars(addslashes($act_name)); ?>&quot; from ALL students?');" style="margin-left:auto;flex-shrink:0;">
             <input type="hidden" name="class_id"      value="<?php echo $students[0]['class_id']; ?>">
             <input type="hidden" name="activity_name" value="<?php echo htmlspecialchars($act_name); ?>">
-            <button type="submit" name="delete_class_activity" value="1" class="btn btn-danger btn-sm" title="Remove from entire class"><i class="fas fa-trash"></i> Remove All</button>
+            <button type="submit" name="delete_class_activity" value="1" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i> Remove All</button>
           </form>
         </div>
-        <div class="act-sub-body">
-          <table>
-            <tr><th>Student</th><th>Status</th><th>Mark Done</th><th>Delete</th></tr>
-            <?php foreach($students as $row): ?>
-            <tr>
-              <td style="font-weight:700;"><?php echo htmlspecialchars($row['fullname']); ?></td>
-              <td><?php echo $row['completed']?'<span class="badge b-green"><i class="fas fa-check"></i> Done</span>':'<span class="badge b-gold"><i class="fas fa-clock"></i> Pending</span>'; ?></td>
-              <td>
-                <form method="POST" action="admin_dashboard.php" style="display:inline;">
-                  <input type="hidden" name="activity_id"     value="<?php echo $row['activity_id']; ?>">
-                  <input type="hidden" name="update_activity" value="1">
-                  <label class="toggle"><input type="checkbox" name="completed" <?php echo $row['completed']?'checked':''; ?> onChange="this.form.submit()"> Done</label>
-                </form>
-              </td>
-              <td>
-                <form method="POST" action="admin_dashboard.php" onsubmit="return confirm('Delete for <?php echo htmlspecialchars(addslashes($row['fullname'])); ?> only?');" style="display:inline;">
-                  <input type="hidden" name="activity_id" value="<?php echo $row['activity_id']; ?>">
-                  <button type="submit" name="delete_activity" value="1" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i></button>
-                </form>
-              </td>
-            </tr>
-            <?php endforeach; ?>
-          </table>
+        <div class="act-list">
+          <?php foreach($students as $row):
+            $is_done=(bool)$row['completed'];
+            $row_cls='act-row '.($is_done?'done':'pending');
+          ?>
+          <div class="<?php echo $row_cls; ?>">
+            <div class="act-row-left">
+              <span class="act-dot"></span>
+              <span class="act-student-name"><?php echo htmlspecialchars($row['fullname']); ?></span>
+            </div>
+            <?php if($is_done): ?>
+              <span class="act-status-pill pill-done"><i class="fas fa-check-circle"></i> Completed</span>
+            <?php else: ?>
+              <span class="act-status-pill pill-pend"><i class="fas fa-hourglass-half"></i> Pending</span>
+            <?php endif; ?>
+            <div class="act-row-actions">
+              <form method="POST" action="admin_dashboard.php" style="display:inline;">
+                <input type="hidden" name="activity_id"     value="<?php echo $row['activity_id']; ?>">
+                <input type="hidden" name="update_activity" value="1">
+                <label class="toggle" style="font-size:.78rem;"><input type="checkbox" name="completed" <?php echo $row['completed']?'checked':''; ?> onChange="this.form.submit()"> Done</label>
+              </form>
+              <form method="POST" action="admin_dashboard.php" onsubmit="return confirm('Delete for <?php echo htmlspecialchars(addslashes($row['fullname'])); ?> only?');" style="display:inline;">
+                <input type="hidden" name="activity_id" value="<?php echo $row['activity_id']; ?>">
+                <button type="submit" name="delete_activity" value="1" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i></button>
+              </form>
+            </div>
+          </div>
+          <?php endforeach; ?>
         </div>
       </div>
       <?php endforeach; ?>
     </div>
   </div>
   <?php endforeach; endif; ?>
-
 </div>
 
-<!-- ══ REMINDERS — grouped by class vs global ══ -->
+<!-- REMINDERS -->
 <div class="section <?php echo $active_section=='reminders'?'active':''; ?>">
   <div class="sec-title"><i class="fas fa-bell"></i> Reminders</div>
   <div class="card">
@@ -950,13 +870,8 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
         <div class="field" style="display:flex;align-items:flex-end;"><button type="submit" name="add_reminder" value="1" class="btn btn-primary" style="width:100%;justify-content:center;"><i class="fas fa-paper-plane"></i> Post</button></div>
       </div>
     </form>
-    <?php if($has_class_id): ?>
-    <p class="info-note" style="margin-top:10px;margin-bottom:0;"><i class="fas fa-info-circle"></i> Selecting a class means only students in that class will see this reminder.</p>
-    <?php endif; ?>
   </div>
-
   <?php
-  /* Separate into global vs per-class */
   $result_reminders->data_seek(0);
   $rems_global=[]; $rems_by_class=[];
   while($row=$result_reminders->fetch_assoc()){
@@ -964,8 +879,6 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
     else $rems_global[]=$row;
   }
   ?>
-
-  <!-- Global reminders -->
   <?php if(!empty($rems_global)): ?>
   <div class="grp-block">
     <div class="grp-head green">
@@ -993,8 +906,6 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
     </div>
   </div>
   <?php endif; ?>
-
-  <!-- Class-specific reminders -->
   <?php foreach($rems_by_class as $cls_name => $rems): ?>
   <div class="grp-block">
     <div class="grp-head">
@@ -1027,7 +938,7 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
   <?php endif; ?>
 </div>
 
-<!-- ══ PERFORMANCE ══ -->
+<!-- PERFORMANCE -->
 <div class="section <?php echo $active_section=='performance'?'active':''; ?>">
   <div class="sec-title"><i class="fas fa-chart-line"></i> Full Student Performance</div>
   <div class="card"><table>
@@ -1053,7 +964,7 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
   </table></div>
 </div>
 
-<!-- ══ ANALYTICS ══ -->
+<!-- ANALYTICS -->
 <div class="section <?php echo $active_section=='analytics'?'active':''; ?>">
   <div class="sec-title"><i class="fas fa-chart-bar"></i> Analytics</div>
   <div class="chart-grid">
@@ -1064,10 +975,9 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
   </div>
 </div>
 
-</div><!-- end .main -->
-</div><!-- end .layout -->
+</div></div><!-- end main / layout -->
 
-<!-- THEME MODAL -->
+<!-- MODAL -->
 <div class="modal-overlay" id="themeModal" onclick="if(event.target===this)closeModal()">
   <div class="modal-box">
     <div class="modal-head">
@@ -1094,7 +1004,6 @@ particlesJS('particles-js',{particles:{number:{value:70,density:{enable:true,val
 </script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-/* ── THEME ── */
 const R=document.documentElement;
 function isDark(){return R.getAttribute('data-theme')!=='light';}
 function chartGrid(){return isDark()?'rgba(0,255,255,0.05)':'rgba(79,100,220,0.10)';}
@@ -1105,14 +1014,19 @@ function applyTheme(t){
   document.getElementById('btn-light').classList.toggle('on',t==='light');
 }
 function setTheme(t){applyTheme(t);}
-function applyAccent(c){R.style.setProperty('--ap',c);localStorage.setItem('paops_accent',c);document.querySelectorAll('.accent-dot').forEach(d=>{d.classList.toggle('on',d.dataset.c===c);});}
+function applyAccent(c){R.style.setProperty('--ap',c);localStorage.setItem('paops_accent',c);document.querySelectorAll('.accent-dot').forEach(d=>d.classList.toggle('on',d.dataset.c===c));}
 function setAccent(c){applyAccent(c);}
 function openModal(){document.getElementById('themeModal').classList.add('open');}
 function closeModal(){document.getElementById('themeModal').classList.remove('open');}
-(function(){applyTheme(localStorage.getItem('paops_theme')||'dark');applyAccent(localStorage.getItem('paops_accent')||'#4facfe');})();
-/* ── CHARTS ── */
+/* theme already applied by <head> script — just sync the buttons */
+(function(){
+  applyTheme(localStorage.getItem('paops_theme')||'dark');
+  applyAccent(localStorage.getItem('paops_accent')||'#4facfe');
+})();
 Chart.defaults.color=chartLabel();Chart.defaults.borderColor=chartGrid();
-const CL=<?php echo json_encode($chart_classes); ?>;const CA=<?php echo json_encode($chart_avgs); ?>;const ED=<?php echo json_encode($enroll_per_class); ?>;
+const CL=<?php echo json_encode($chart_classes); ?>;
+const CA=<?php echo json_encode($chart_avgs); ?>;
+const ED=<?php echo json_encode($enroll_per_class); ?>;
 const passed=<?php echo intval($passed); ?>,failed=<?php echo intval($failed); ?>;
 const compA=<?php echo intval($comp_acts); ?>,pendA=<?php echo intval($pend_acts); ?>;
 function mkBar(id,l,d,c){const el=document.getElementById(id);if(!el)return;const gc=chartGrid(),lc=chartLabel();new Chart(el,{type:'bar',data:{labels:l,datasets:[{data:d,backgroundColor:c+'55',borderColor:c,borderWidth:2,borderRadius:5}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,grid:{color:gc},ticks:{color:lc}},x:{grid:{color:gc},ticks:{color:lc}}}}});}
@@ -1120,115 +1034,40 @@ function mkDonut(id,l,d,cols){const el=document.getElementById(id);if(!el)return
 mkBar('barA',CL,CA,'#4facfe');mkBar('barB',CL,CA,'#4facfe');
 mkBar('actA',['Completed','Pending'],[compA,pendA],'#00cec9');mkBar('actB',['Completed','Pending'],[compA,pendA],'#00cec9');
 mkBar('enrB',CL,ED,'#a29bfe');
-mkDonut('doA',['Passed','Failed'],[passed,failed],['#2ecc71','#ff6b81']);mkDonut('doB',['Passed','Failed'],[passed,failed],['#2ecc71','#ff6b81']);
-/* ── ENROLL PAGINATION ── */
-const PER_PAGE = 6;
-let enrollPage = 1;
-let enrollQuery = '';
-
-function getRows() {
-  return Array.from(document.querySelectorAll('#chk_list .chk-row'));
-}
-function getVisible() {
-  /* rows that match the current search */
-  const q = enrollQuery.toLowerCase();
-  return getRows().filter(r => !q || (r.dataset.name||'').includes(q));
-}
-function renderPage(page) {
-  enrollPage = page;
-  const visible = getVisible();
-  const total   = visible.length;
-  const pages   = Math.max(1, Math.ceil(total / PER_PAGE));
-  if(enrollPage > pages) enrollPage = pages;
-  const start = (enrollPage - 1) * PER_PAGE;
-  const end   = start + PER_PAGE;
-
-  /* hide ALL rows first */
-  getRows().forEach(r => r.classList.add('pg-hidden'));
-  /* show only this page's visible rows */
-  visible.forEach((r, i) => {
-    if(i >= start && i < end) r.classList.remove('pg-hidden');
-  });
-
-  /* page info */
-  const info = document.getElementById('pg_info');
-  if(info) info.textContent = total === 0
-    ? 'No students found'
-    : `Page ${enrollPage} of ${pages} — ${total} student${total!==1?'s':''} shown`;
-
-  /* pagination buttons */
+mkDonut('doA',['Passed','Failed'],[passed,failed],['#2ecc71','#ff6b81']);
+mkDonut('doB',['Passed','Failed'],[passed,failed],['#2ecc71','#ff6b81']);
+/* ENROLL PAGINATION */
+const PER_PAGE=6;let enrollPage=1,enrollQuery='';
+function getRows(){return Array.from(document.querySelectorAll('#chk_list .chk-row'));}
+function getVisible(){const q=enrollQuery.toLowerCase();return getRows().filter(r=>!q||(r.dataset.name||'').includes(q));}
+function renderPage(page){
+  enrollPage=page;const visible=getVisible();const total=visible.length;
+  const pages=Math.max(1,Math.ceil(total/PER_PAGE));
+  if(enrollPage>pages)enrollPage=pages;
+  const start=(enrollPage-1)*PER_PAGE,end=start+PER_PAGE;
+  getRows().forEach(r=>r.classList.add('pg-hidden'));
+  visible.forEach((r,i)=>{if(i>=start&&i<end)r.classList.remove('pg-hidden');});
+  const info=document.getElementById('pg_info');
+  if(info)info.textContent=total===0?'No students found':`Page ${enrollPage} of ${pages} — ${total} student${total!==1?'s':''} shown`;
   buildPager(pages);
 }
-
-function buildPager(pages) {
-  const ctrl = document.getElementById('pg_controls');
-  if(!ctrl) return;
-  ctrl.innerHTML = '';
-
-  const btn = (label, page, disabled, active) => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'pg-btn' + (active?' active':'');
-    b.innerHTML = label;
-    b.disabled = disabled;
-    if(!disabled) b.onclick = () => renderPage(page);
-    return b;
-  };
-
-  /* prev */
-  ctrl.appendChild(btn('<i class="fas fa-chevron-left"></i>', enrollPage-1, enrollPage===1, false));
-
-  /* page numbers with ellipsis */
-  let nums = [];
-  if(pages <= 7) {
-    for(let i=1;i<=pages;i++) nums.push(i);
-  } else {
-    nums = [1];
-    if(enrollPage > 3) { const d=document.createElement('span'); d.className='pg-dots'; d.textContent='…'; nums.push(d); }
-    for(let i=Math.max(2,enrollPage-1); i<=Math.min(pages-1,enrollPage+1); i++) nums.push(i);
-    if(enrollPage < pages-2) { const d=document.createElement('span'); d.className='pg-dots'; d.textContent='…'; nums.push(d); }
-    nums.push(pages);
-  }
-  nums.forEach(n => {
-    if(typeof n === 'number') ctrl.appendChild(btn(n, n, false, n===enrollPage));
-    else ctrl.appendChild(n);
-  });
-
-  /* next */
-  ctrl.appendChild(btn('<i class="fas fa-chevron-right"></i>', enrollPage+1, enrollPage===pages||pages===0, false));
+function buildPager(pages){
+  const ctrl=document.getElementById('pg_controls');if(!ctrl)return;ctrl.innerHTML='';
+  const btn=(label,page,disabled,active)=>{const b=document.createElement('button');b.type='button';b.className='pg-btn'+(active?' active':'');b.innerHTML=label;b.disabled=disabled;if(!disabled)b.onclick=()=>renderPage(page);return b;};
+  ctrl.appendChild(btn('<i class="fas fa-chevron-left"></i>',enrollPage-1,enrollPage===1,false));
+  let nums=[];
+  if(pages<=7){for(let i=1;i<=pages;i++)nums.push(i);}
+  else{nums=[1];if(enrollPage>3){const d=document.createElement('span');d.className='pg-dots';d.textContent='…';nums.push(d);}for(let i=Math.max(2,enrollPage-1);i<=Math.min(pages-1,enrollPage+1);i++)nums.push(i);if(enrollPage<pages-2){const d=document.createElement('span');d.className='pg-dots';d.textContent='…';nums.push(d);}nums.push(pages);}
+  nums.forEach(n=>{if(typeof n==='number')ctrl.appendChild(btn(n,n,false,n===enrollPage));else ctrl.appendChild(n);});
+  ctrl.appendChild(btn('<i class="fas fa-chevron-right"></i>',enrollPage+1,enrollPage===pages||pages===0,false));
 }
-
-function toggleChk(row) {
-  const cb = row.querySelector('input[type="checkbox"]');
-  const on = !row.classList.contains('checked');
-  row.classList.toggle('checked', on);
-  cb.checked = on;
-  updateCnt();
-}
-function updateCnt() {
-  const n = document.querySelectorAll('.chk-row.checked').length;
-  const el = document.getElementById('sel_cnt');
-  if(el) el.textContent = n + ' student' + (n===1?'':'s') + ' selected';
-}
-function pickAll(v) {
-  /* only act on currently visible (search-filtered) rows */
-  getVisible().forEach(r => {
-    r.classList.toggle('checked', v);
-    const cb = r.querySelector('input[type="checkbox"]');
-    if(cb) cb.checked = v;
-  });
-  updateCnt();
-}
-function enrollSearch(q) {
-  enrollQuery = q;
-  renderPage(1);
-}
-/* init pagination on load */
-document.addEventListener('DOMContentLoaded', () => renderPage(1));
-/* ── BLOCKS ── */
+function toggleChk(row){const cb=row.querySelector('input[type="checkbox"]');const on=!row.classList.contains('checked');row.classList.toggle('checked',on);cb.checked=on;updateCnt();}
+function updateCnt(){const n=document.querySelectorAll('.chk-row.checked').length;const el=document.getElementById('sel_cnt');if(el)el.textContent=n+' student'+(n===1?'':'s')+' selected';}
+function pickAll(v){getVisible().forEach(r=>{r.classList.toggle('checked',v);const cb=r.querySelector('input[type="checkbox"]');if(cb)cb.checked=v;});updateCnt();}
+function enrollSearch(q){enrollQuery=q;renderPage(1);}
+document.addEventListener('DOMContentLoaded',()=>renderPage(1));
 function toggleBlk(id){const b=document.getElementById('blk-'+id);const ic=document.getElementById('blk-icon-'+id);const op=b.classList.contains('open');b.classList.toggle('open',!op);ic.style.transform=op?'':'rotate(180deg)';}
 function toggleEdit(eid){document.getElementById('edit-'+eid).classList.toggle('open');}
-/* ── FLASH FADE ── */
 setTimeout(()=>{const f=document.querySelector('.flash');if(f){f.style.transition='opacity .5s';f.style.opacity='0';}},4500);
 </script>
 </body>
