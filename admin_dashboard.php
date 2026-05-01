@@ -375,8 +375,16 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
 .grp-name.green{color:#2ecc71;}
 .grp-tag{font-size:.68rem;font-weight:700;padding:2px 9px;border-radius:9px;}
 .grp-body{background:var(--card);overflow-x:auto;padding:12px 14px;}
-.grp-body table{min-width:420px;}
-.grp-body table th:first-child,.grp-body table td:first-child{text-align:left;}
+.grp-body table td:first-child,
+.grp-body table th:first-child {
+    text-align: left;
+    min-width: 140px;
+}
+.grp-body table td:not(:first-child),
+.grp-body table th:not(:first-child) {
+    text-align: center;
+    width: 110px;
+}
 
 /* ═══ ACTIVITIES — REDESIGNED ═══ */
 .act-class-block{margin-bottom:16px;border-radius:13px;overflow:hidden;border:1px solid var(--bdr);}
@@ -510,6 +518,15 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
   .chart-grid{grid-template-columns:1fr;}
   .act-row{flex-wrap:wrap;}
 }
+
+.grp-body table th:nth-child(1), .grp-body table td:nth-child(1) { width:22%; text-align:left; }
+.grp-body table th:nth-child(2), .grp-body table td:nth-child(2),
+.grp-body table th:nth-child(3), .grp-body table td:nth-child(3),
+.grp-body table th:nth-child(4), .grp-body table td:nth-child(4) { width:13%; }
+.grp-body table th:nth-child(5), .grp-body table td:nth-child(5) { width:12%; }
+.grp-body table th:nth-child(6), .grp-body table td:nth-child(6) { width:14%; }
+.grp-body table th:nth-child(7), .grp-body table td:nth-child(7) { width:10%; }
+
 </style>
 </head>
 <body>
@@ -608,7 +625,7 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
   <div class="card">
     <div class="card-title"><i class="fas fa-user-plus"></i> Enroll Students in Class</div>
     <p class="info-note"><i class="fas fa-info-circle"></i> Pick a class, tick students, click <strong>Enroll Selected</strong>. Already-enrolled are skipped.</p>
-    <form method="POST" action="admin_dashboard.php" id="enrollForm">
+    <form id="enrollForm">
       <div class="enroll-wrap">
         <div class="enroll-top">
           <div class="field" style="flex:1;min-width:200px;"><label>Class *</label>
@@ -645,23 +662,11 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
         </div>
         <div class="enroll-footer">
           <span class="sel-cnt" id="sel_cnt">0 students selected</span>
-          <button type="submit" name="enroll_student" value="1" class="btn btn-primary"><i class="fas fa-user-plus"></i> Enroll Selected</button>
+          <button type="button" class="btn btn-primary" onclick="submitEnroll()"><i class="fas fa-user-plus"></i> Enroll Selected</button>
+          <div id="enroll-result" style="font-size:.84rem;font-weight:600;padding:6px 10px;border-radius:8px;display:none;margin-top:8px;"></div>
         </div>
       </div>
     </form>
-  </div>
-  <div class="card">
-    <div class="card-title"><i class="fas fa-list"></i> All Classes</div>
-    <table><tr><th>#</th><th>Class Name</th><th>Enrolled</th><th>Action</th></tr>
-    <?php foreach($classes_arr as $i=>$row): $ecnt=count($enrollments_by_class[$row['id']]??[]); ?>
-    <tr><td><?php echo $i+1; ?></td><td style="text-align:left;font-weight:700;"><?php echo htmlspecialchars($row['class_name']); ?></td>
-    <td><span class="badge b-blue"><?php echo $ecnt; ?> student<?php echo $ecnt!=1?'s':''; ?></span></td>
-    <td><form method="POST" action="admin_dashboard.php" onsubmit="return confirm('Delete this class?');" style="display:inline;">
-      <input type="hidden" name="class_id" value="<?php echo $row['id']; ?>">
-      <button type="submit" name="delete_class" value="1" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i> Delete</button>
-    </form></td></tr>
-    <?php endforeach; ?>
-    </table>
   </div>
   <div class="card">
     <div class="card-title"><i class="fas fa-users-cog"></i> Enrolled Students — Manage by Class</div>
@@ -672,7 +677,13 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
     <div class="cls-block">
       <div class="cls-block-head" onclick="toggleBlk(<?php echo $cls['id']; ?>)">
         <div class="cb-title"><i class="fas fa-chalkboard-teacher" style="color:var(--ap);"></i><?php echo htmlspecialchars($cls['class_name']); ?><span class="cb-cnt"><?php echo $ecnt; ?> student<?php echo $ecnt!=1?'s':''; ?></span></div>
-        <i class="fas fa-chevron-down" id="blk-icon-<?php echo $cls['id']; ?>" style="color:var(--muted);font-size:.8rem;transition:.2s;"></i>
+        <div style="display:flex;align-items:center;gap:8px;" onclick="event.stopPropagation()">
+          <form method="POST" action="admin_dashboard.php" onsubmit="return confirm('Delete class <?php echo htmlspecialchars(addslashes($cls['class_name'])); ?>?');" style="display:inline;">
+            <input type="hidden" name="class_id" value="<?php echo $cls['id']; ?>">
+            <button type="submit" name="delete_class" value="1" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i> Delete</button>
+          </form>
+          <i class="fas fa-chevron-down" id="blk-icon-<?php echo $cls['id']; ?>" style="color:var(--muted);font-size:.8rem;transition:.2s;"></i>
+        </div>
       </div>
       <div class="cls-block-body" id="blk-<?php echo $cls['id']; ?>">
         <?php if(empty($enrolled)): ?><div class="no-data"><i class="fas fa-user-slash"></i>No students enrolled.</div>
@@ -732,7 +743,7 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
         ?>
         <tr><form method="POST" action="admin_dashboard.php">
           <input type="hidden" name="enrollment_id" value="<?php echo $row['enrollment_id']; ?>">
-          <td style="font-weight:700;"><?php echo htmlspecialchars($row['fullname']); ?></td>
+          <td style="font-weight:700; text-align:left;"><?php echo htmlspecialchars($row['fullname']); ?></td>
           <td><input type="number" name="prelim"  min="0" max="100" step=".01" value="<?php echo $row['prelim']?:''; ?>" placeholder="0"></td>
           <td><input type="number" name="midterm" min="0" max="100" step=".01" value="<?php echo $row['midterm']?:''; ?>" placeholder="0"></td>
           <td><input type="number" name="final"   min="0" max="100" step=".01" value="<?php echo $row['final']?:''; ?>"  placeholder="0"></td>
@@ -1069,6 +1080,75 @@ document.addEventListener('DOMContentLoaded',()=>renderPage(1));
 function toggleBlk(id){const b=document.getElementById('blk-'+id);const ic=document.getElementById('blk-icon-'+id);const op=b.classList.contains('open');b.classList.toggle('open',!op);ic.style.transform=op?'':'rotate(180deg)';}
 function toggleEdit(eid){document.getElementById('edit-'+eid).classList.toggle('open');}
 setTimeout(()=>{const f=document.querySelector('.flash');if(f){f.style.transition='opacity .5s';f.style.opacity='0';}},4500);
+
+function submitEnroll(){
+  const form = document.getElementById('enrollForm');
+  const classId = form.querySelector('select[name="class_id"]').value;
+  const checked = form.querySelectorAll('input[name="student_ids[]"]:checked');
+  const result = document.getElementById('enroll-result');
+
+  if(!classId){
+    result.style.display='block';
+    result.style.background='rgba(255,71,87,.13)';
+    result.style.border='1px solid rgba(255,71,87,.3)';
+    result.style.color='#ff6b81';
+    result.textContent='⚠ Please select a class.';
+    return;
+  }
+  if(checked.length===0){
+    result.style.display='block';
+    result.style.background='rgba(255,71,87,.13)';
+    result.style.border='1px solid rgba(255,71,87,.3)';
+    result.style.color='#ff6b81';
+    result.textContent='⚠ Please select at least one student.';
+    return;
+  }
+
+  const data = new FormData();
+  data.append('class_id', classId);
+  data.append('enroll_student', '1');
+  checked.forEach(cb => data.append('student_ids[]', cb.value));
+
+  result.style.display='block';
+  result.style.background='rgba(79,172,254,.10)';
+  result.style.border='1px solid rgba(79,172,254,.25)';
+  result.style.color='#4facfe';
+  result.textContent='Enrolling...';
+
+  fetch('admin_dashboard.php', {method:'POST', body:data})
+    .then(r => r.text())
+    .then(html => {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      const flashEl = doc.querySelector('.flash');
+      const msg = flashEl ? flashEl.textContent.trim() : 'Done!';
+      const isError = flashEl && flashEl.classList.contains('error');
+
+      result.style.background = isError ? 'rgba(255,71,87,.13)' : 'rgba(46,204,113,.13)';
+      result.style.border = isError ? '1px solid rgba(255,71,87,.3)' : '1px solid rgba(46,204,113,.3)';
+      result.style.color = isError ? '#ff6b81' : '#2ecc71';
+      result.textContent = (isError ? '✗ ' : '✓ ') + msg;
+
+      // uncheck all selected students
+      if(!isError){
+        form.querySelectorAll('.chk-row.checked').forEach(r=>{
+          r.classList.remove('checked');
+          const cb=r.querySelector('input[type="checkbox"]');
+          if(cb) cb.checked=false;
+        });
+        updateCnt();
+      }
+
+      setTimeout(()=>{ result.style.display='none'; }, 4000);
+    })
+    .catch(()=>{
+      result.style.background='rgba(255,71,87,.13)';
+      result.style.border='1px solid rgba(255,71,87,.3)';
+      result.style.color='#ff6b81';
+      result.textContent='✗ Network error. Please try again.';
+    });
+}
+
 </script>
 </body>
 </html>
