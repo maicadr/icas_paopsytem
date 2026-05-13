@@ -655,6 +655,7 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
 .grp-body table th:nth-child(5), .grp-body table td:nth-child(5) { width:12%; }
 .grp-body table th:nth-child(6), .grp-body table td:nth-child(6) { width:14%; }
 .grp-body table th:nth-child(7), .grp-body table td:nth-child(7) { width:10%; }
+
 </style>
 </head>
 <body>
@@ -690,7 +691,6 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
   </div>
   <div class="tb-right">
     <button class="settings-btn" onclick="openModal()"><i class="fas fa-palette"></i> Settings</button>
-    <a href="?logout"><i class="fas fa-sign-out-alt"></i> Logout</a>
   </div>
 </div>
 <?php if($flash): ?>

@@ -271,9 +271,6 @@ body, html {
         <div id="attemptBar" style="margin:-4px 0 10px;font-size:.78rem;color:rgba(255,200,100,.85);display:none;">
           <i class="fas fa-exclamation-triangle"></i> <span id="attemptTxt"></span>
         </div>
-        <label class="remember">
-          <input type="checkbox" name="remember"> Remember me for 30 days
-        </label>
         <button type="submit" name="login" id="loginBtn" class="submit-btn">
           <i class="fas fa-arrow-right-to-bracket"></i> &nbsp;Login
         </button>
