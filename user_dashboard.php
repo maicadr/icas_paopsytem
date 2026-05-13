@@ -469,7 +469,6 @@ td:first-child,th:first-child{text-align:left;}
     </div>
     <div class="tb-right">
       <button class="settings-btn" onclick="openModal()"><i class="fas fa-palette"></i> Settings</button>
-      <a href="?logout" class="logout-btn"><i class="fas fa-sign-out-alt"></i> Logout</a>
     </div>
   </div>
 

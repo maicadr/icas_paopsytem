@@ -27,6 +27,37 @@ if(!isset($_SESSION['user_id'])){
 if(!isset($_SESSION['role'])||$_SESSION['role']!='admin'){ header("Location: index.php"); exit(); }
 $admin_id=(int)$_SESSION['user_id'];
 
+// ─── Helper: verify a class belongs to THIS admin ────────────────────────────
+function ownedClass($conn, $class_id, $admin_id){
+    $s=$conn->prepare("SELECT id FROM classes WHERE id=? AND teacher_id=?");
+    $s->bind_param("ii",$class_id,$admin_id);
+    $s->execute(); $s->store_result();
+    return $s->num_rows>0;
+}
+// ─── Helper: verify an enrollment belongs to a class owned by THIS admin ─────
+function ownedEnrollment($conn, $enrollment_id, $admin_id){
+    $s=$conn->prepare("SELECT e.id FROM enrollments e JOIN classes c ON c.id=e.class_id WHERE e.id=? AND c.teacher_id=?");
+    $s->bind_param("ii",$enrollment_id,$admin_id);
+    $s->execute(); $s->store_result();
+    return $s->num_rows>0;
+}
+// ─── Helper: verify an activity belongs to THIS admin ────────────────────────
+function ownedActivity($conn, $activity_id, $admin_id){
+    $s=$conn->prepare("SELECT a.id FROM activities a JOIN enrollments e ON e.id=a.enrollment_id JOIN classes c ON c.id=e.class_id WHERE a.id=? AND c.teacher_id=?");
+    $s->bind_param("ii",$activity_id,$admin_id);
+    $s->execute(); $s->store_result();
+    return $s->num_rows>0;
+}
+// ─── Helper: verify a reminder belongs to THIS admin ─────────────────────────
+function ownedReminder($conn, $reminder_id, $admin_id){
+    $s=$conn->prepare("SELECT id FROM reminders WHERE id=? AND created_by=?");
+    $s->bind_param("ii",$reminder_id,$admin_id);
+    $s->execute(); $s->store_result();
+    return $s->num_rows>0;
+}
+
+// ════════════════════ POST HANDLERS ════════════════════
+
 if(isset($_POST['add_class'])){
     $cname=trim($_POST['class_name']);
     if($cname!==''){
@@ -37,98 +68,144 @@ if(isset($_POST['add_class'])){
     } else { $flash="Class name required."; $ft='error'; }
     header("Location: admin_dashboard.php?section=classes&flash=".urlencode($flash)."&ft=$ft"); exit();
 }
+
 if(isset($_POST['delete_class'])){
     $cid=(int)$_POST['class_id'];
-    $s=$conn->prepare("DELETE FROM classes WHERE id=?");
-    $s->bind_param("i",$cid); $s->execute();
-    header("Location: admin_dashboard.php?section=classes&flash=".urlencode("Class deleted.")."&ft=success"); exit();
-}
-if(isset($_POST['enroll_student'])){
-    $cid=(int)$_POST['class_id'];
-    $sids=isset($_POST['student_ids'])?$_POST['student_ids']:[];
-    if($cid===0||empty($sids)){ $flash="Please select a class and at least one student."; $ft='error'; }
-    else {
-        $enrolled_count=0; $skip_count=0;
-        $chk=$conn->prepare("SELECT id FROM enrollments WHERE student_id=? AND class_id=?");
-        $ins=$conn->prepare("INSERT INTO enrollments(student_id,class_id) VALUES(?,?)");
-        foreach($sids as $sid_raw){
-            $sid=(int)$sid_raw; if($sid===0) continue;
-            $chk->bind_param("ii",$sid,$cid); $chk->execute(); $chk->store_result();
-            if($chk->num_rows>0){ $skip_count++; $chk->free_result(); continue; }
-            $chk->free_result();
-            $ins->bind_param("ii",$sid,$cid); $ins->execute();
-            $new_eid=$conn->insert_id;
-            $ex=$conn->query("SELECT DISTINCT a.activity_name FROM activities a JOIN enrollments e ON a.enrollment_id=e.id WHERE e.class_id=$cid");
-            if($ex&&$ex->num_rows>0){
-                $ai=$conn->prepare("INSERT INTO activities(enrollment_id,activity_name,completed) VALUES(?,?,0)");
-                while($act=$ex->fetch_assoc()){ $ai->bind_param("is",$new_eid,$act['activity_name']); $ai->execute(); }
-            }
-            $enrolled_count++;
-        }
-        $msg="$enrolled_count student(s) enrolled successfully.";
-        if($skip_count>0) $msg.=" $skip_count already enrolled (skipped).";
-        $flash=$msg; $ft='success';
-    }
+    if(ownedClass($conn,$cid,$admin_id)){
+        $s=$conn->prepare("DELETE FROM classes WHERE id=? AND teacher_id=?");
+        $s->bind_param("ii",$cid,$admin_id); $s->execute();
+        $flash="Class deleted."; $ft='success';
+    } else { $flash="Unauthorized."; $ft='error'; }
     header("Location: admin_dashboard.php?section=classes&flash=".urlencode($flash)."&ft=$ft"); exit();
 }
+
+if(isset($_POST['enroll_student'])){
+    $is_ajax=!empty($_POST['ajax']);
+    $cid=(int)$_POST['class_id'];
+    $sids=isset($_POST['student_ids'])?$_POST['student_ids']:[];
+    if($cid===0||empty($sids)){
+        $err="Please select a class and at least one student.";
+        if($is_ajax){ header('Content-Type: application/json'); echo json_encode(['ok'=>false,'msg'=>$err]); exit(); }
+        header("Location: admin_dashboard.php?section=classes&flash=".urlencode($err)."&ft=error"); exit();
+    }
+    if(!ownedClass($conn,$cid,$admin_id)){
+        if($is_ajax){ header('Content-Type: application/json'); echo json_encode(['ok'=>false,'msg'=>'Unauthorized.']); exit(); }
+        header("Location: admin_dashboard.php?section=classes&flash=Unauthorized.&ft=error"); exit();
+    }
+    $enrolled_count=0; $skip_count=0; $new_students=[];
+    $chk=$conn->prepare("SELECT id FROM enrollments WHERE student_id=? AND class_id=?");
+    $ins=$conn->prepare("INSERT INTO enrollments(student_id,class_id) VALUES(?,?)");
+    foreach($sids as $sid_raw){
+        $sid=(int)$sid_raw; if($sid===0) continue;
+        $chk->bind_param("ii",$sid,$cid); $chk->execute(); $chk->store_result();
+        if($chk->num_rows>0){ $skip_count++; $chk->free_result(); continue; }
+        $chk->free_result();
+        $ins->bind_param("ii",$sid,$cid); $ins->execute();
+        $new_eid=$conn->insert_id;
+        $ex=$conn->query("SELECT DISTINCT a.activity_name FROM activities a JOIN enrollments e ON a.enrollment_id=e.id WHERE e.class_id=$cid");
+        if($ex&&$ex->num_rows>0){
+            $ai=$conn->prepare("INSERT INTO activities(enrollment_id,activity_name,completed) VALUES(?,?,0)");
+            while($act=$ex->fetch_assoc()){ $ai->bind_param("is",$new_eid,$act['activity_name']); $ai->execute(); }
+        }
+        // fetch full person info to return for DOM injection
+        $pi=$conn->prepare("SELECT id,fullname,email FROM people WHERE id=?");
+        $pi->bind_param("i",$sid); $pi->execute(); $pr=$pi->get_result()->fetch_assoc();
+        if($pr) $new_students[]=['eid'=>$new_eid,'pid'=>$pr['id'],'fullname'=>$pr['fullname'],'email'=>$pr['email'],'class_id'=>$cid];
+        $enrolled_count++;
+    }
+    $msg="$enrolled_count student(s) enrolled successfully.";
+    if($skip_count>0) $msg.=" $skip_count already enrolled (skipped).";
+    if($is_ajax){
+        header('Content-Type: application/json');
+        echo json_encode(['ok'=>true,'msg'=>$msg,'enrolled'=>$new_students,'class_id'=>$cid]);
+        exit();
+    }
+    header("Location: admin_dashboard.php?section=classes&flash=".urlencode($msg)."&ft=success"); exit();
+}
+
 if(isset($_POST['unenroll_student'])){
     $eid=(int)$_POST['enrollment_id'];
-    $s=$conn->prepare("DELETE FROM enrollments WHERE id=?");
-    $s->bind_param("i",$eid); $s->execute();
-    header("Location: admin_dashboard.php?section=classes&flash=".urlencode("Student removed from class.")."&ft=success"); exit();
+    if(ownedEnrollment($conn,$eid,$admin_id)){
+        $s=$conn->prepare("DELETE FROM enrollments WHERE id=?");
+        $s->bind_param("i",$eid); $s->execute();
+        $flash="Student removed from class."; $ft='success';
+    } else { $flash="Unauthorized."; $ft='error'; }
+    header("Location: admin_dashboard.php?section=classes&flash=".urlencode($flash)."&ft=$ft"); exit();
 }
+
 if(isset($_POST['update_student'])){
     $pid=(int)$_POST['person_id']; $fn=trim($_POST['fullname']); $em=trim($_POST['email']);
-    if($fn&&$em){
+    // verify this student is enrolled in at least one of THIS admin's classes
+    $chkOwn=$conn->prepare("SELECT e.id FROM enrollments e JOIN classes c ON c.id=e.class_id WHERE e.student_id=? AND c.teacher_id=? LIMIT 1");
+    $chkOwn->bind_param("ii",$pid,$admin_id); $chkOwn->execute(); $chkOwn->store_result();
+    if($fn&&$em&&$chkOwn->num_rows>0){
         $s=$conn->prepare("UPDATE people SET fullname=?,email=? WHERE id=? AND role='user'");
         $s->bind_param("ssi",$fn,$em,$pid); $s->execute();
         $flash="Student info updated."; $ft='success';
-    } else { $flash="Name and email required."; $ft='error'; }
+    } else { $flash=$chkOwn->num_rows===0?"Unauthorized.":"Name and email required."; $ft='error'; }
     header("Location: admin_dashboard.php?section=classes&flash=".urlencode($flash)."&ft=$ft"); exit();
 }
+
 if(isset($_POST['add_activity'])){
     $cid=(int)$_POST['class_id']; $aname=trim($_POST['activity_name']);
     if($cid&&$aname!==''){
-        $enr=$conn->prepare("SELECT id FROM enrollments WHERE class_id=?");
-        $enr->bind_param("i",$cid); $enr->execute(); $enr_res=$enr->get_result();
-        if($enr_res->num_rows===0){ $flash="No students enrolled in that class yet."; $ft='error'; }
+        if(!ownedClass($conn,$cid,$admin_id)){ $flash="Unauthorized."; $ft='error'; }
         else {
-            $ins=$conn->prepare("INSERT INTO activities(enrollment_id,activity_name,completed) VALUES(?,?,0)");
-            $cnt=0;
-            while($row=$enr_res->fetch_assoc()){
-                $eid=$row['id'];
-                $dup=$conn->prepare("SELECT id FROM activities WHERE enrollment_id=? AND activity_name=?");
-                $dup->bind_param("is",$eid,$aname); $dup->execute(); $dup->store_result();
-                if($dup->num_rows===0){ $ins->bind_param("is",$eid,$aname); $ins->execute(); $cnt++; }
+            $enr=$conn->prepare("SELECT id FROM enrollments WHERE class_id=?");
+            $enr->bind_param("i",$cid); $enr->execute(); $enr_res=$enr->get_result();
+            if($enr_res->num_rows===0){ $flash="No students enrolled in that class yet."; $ft='error'; }
+            else {
+                $ins=$conn->prepare("INSERT INTO activities(enrollment_id,activity_name,completed) VALUES(?,?,0)");
+                $cnt=0;
+                while($row=$enr_res->fetch_assoc()){
+                    $eid=$row['id'];
+                    $dup=$conn->prepare("SELECT id FROM activities WHERE enrollment_id=? AND activity_name=?");
+                    $dup->bind_param("is",$eid,$aname); $dup->execute(); $dup->store_result();
+                    if($dup->num_rows===0){ $ins->bind_param("is",$eid,$aname); $ins->execute(); $cnt++; }
+                }
+                $flash="Activity '$aname' assigned to $cnt student(s)."; $ft='success';
             }
-            $flash="Activity '$aname' assigned to $cnt student(s)."; $ft='success';
         }
     } else { $flash="Select a class and enter an activity name."; $ft='error'; }
     header("Location: admin_dashboard.php?section=activities&flash=".urlencode($flash)."&ft=$ft"); exit();
 }
+
 if(isset($_POST['update_activity'])){
     $aid=(int)$_POST['activity_id']; $done=isset($_POST['completed'])?1:0;
-    $s=$conn->prepare("UPDATE activities SET completed=? WHERE id=?");
-    $s->bind_param("ii",$done,$aid); $s->execute();
+    if(ownedActivity($conn,$aid,$admin_id)){
+        $s=$conn->prepare("UPDATE activities SET completed=? WHERE id=?");
+        $s->bind_param("ii",$done,$aid); $s->execute();
+    }
     header("Location: admin_dashboard.php?section=activities"); exit();
 }
+
 if(isset($_POST['delete_activity'])){
     $aid=(int)$_POST['activity_id'];
-    $s=$conn->prepare("DELETE FROM activities WHERE id=?");
-    $s->bind_param("i",$aid); $s->execute();
-    header("Location: admin_dashboard.php?section=activities&flash=".urlencode("Activity deleted.")."&ft=success"); exit();
+    if(ownedActivity($conn,$aid,$admin_id)){
+        $s=$conn->prepare("DELETE FROM activities WHERE id=?");
+        $s->bind_param("i",$aid); $s->execute();
+        $flash="Activity deleted."; $ft='success';
+    } else { $flash="Unauthorized."; $ft='error'; }
+    header("Location: admin_dashboard.php?section=activities&flash=".urlencode($flash)."&ft=$ft"); exit();
 }
+
 if(isset($_POST['delete_class_activity'])){
     $cid=(int)$_POST['class_id'];
     $aname=$conn->real_escape_string(trim($_POST['activity_name']));
-    $conn->query("DELETE a FROM activities a JOIN enrollments e ON a.enrollment_id=e.id WHERE e.class_id=$cid AND a.activity_name='$aname'");
-    header("Location: admin_dashboard.php?section=activities&flash=".urlencode("Activity removed from all students.")."&ft=success"); exit();
+    if(ownedClass($conn,$cid,$admin_id)){
+        $conn->query("DELETE a FROM activities a JOIN enrollments e ON a.enrollment_id=e.id WHERE e.class_id=$cid AND a.activity_name='$aname'");
+        $flash="Activity removed from all students."; $ft='success';
+    } else { $flash="Unauthorized."; $ft='error'; }
+    header("Location: admin_dashboard.php?section=activities&flash=".urlencode($flash)."&ft=$ft"); exit();
 }
+
 if(isset($_POST['add_reminder'])){
     $title=trim($_POST['reminder_title']); $body=trim($_POST['reminder_body']);
     $target=$_POST['target_role']??'user';
     $due=!empty($_POST['due_date'])?$_POST['due_date']:null;
     $rcid=!empty($_POST['reminder_class_id'])?(int)$_POST['reminder_class_id']:null;
+    // if a class is specified it must belong to this admin
+    if($rcid && !ownedClass($conn,$rcid,$admin_id)){ $rcid=null; }
     if($title){
         $col=$conn->query("SHOW COLUMNS FROM reminders LIKE 'class_id'");
         if($col&&$col->num_rows>0){
@@ -142,29 +219,38 @@ if(isset($_POST['add_reminder'])){
     } else { $flash="Title required."; $ft='error'; }
     header("Location: admin_dashboard.php?section=reminders&flash=".urlencode($flash)."&ft=$ft"); exit();
 }
+
 if(isset($_POST['delete_reminder'])){
     $rid=(int)$_POST['reminder_id'];
-    $s=$conn->prepare("DELETE FROM reminders WHERE id=?");
-    $s->bind_param("i",$rid); $s->execute();
-    header("Location: admin_dashboard.php?section=reminders&flash=".urlencode("Reminder deleted.")."&ft=success"); exit();
-}
-if(isset($_POST['save_grades'])){
-    $eid=(int)$_POST['enrollment_id'];
-    $p=floatval($_POST['prelim']); $m=floatval($_POST['midterm']); $f=floatval($_POST['final']);
-    $avg=round(($p*0.25+$m*0.25+$f*0.50),2); $st=$avg>=75?'Passed':'Failed';
-    $chk=$conn->prepare("SELECT id FROM grades WHERE enrollment_id=?");
-    $chk->bind_param("i",$eid); $chk->execute(); $chk->store_result();
-    if($chk->num_rows>0){
-        $s=$conn->prepare("UPDATE grades SET prelim=?,midterm=?,final=?,average=?,status=? WHERE enrollment_id=?");
-        $s->bind_param("dddisi",$p,$m,$f,$avg,$st,$eid);
-    } else {
-        $s=$conn->prepare("INSERT INTO grades(enrollment_id,prelim,midterm,final,average,status) VALUES(?,?,?,?,?,?)");
-        $s->bind_param("idddis",$eid,$p,$m,$f,$avg,$st);
-    }
-    $s->execute();
-    header("Location: admin_dashboard.php?section=grades&flash=".urlencode("Grades saved.")."&ft=success"); exit();
+    if(ownedReminder($conn,$rid,$admin_id)){
+        $s=$conn->prepare("DELETE FROM reminders WHERE id=? AND created_by=?");
+        $s->bind_param("ii",$rid,$admin_id); $s->execute();
+        $flash="Reminder deleted."; $ft='success';
+    } else { $flash="Unauthorized."; $ft='error'; }
+    header("Location: admin_dashboard.php?section=reminders&flash=".urlencode($flash)."&ft=$ft"); exit();
 }
 
+if(isset($_POST['save_grades'])){
+    $eid=(int)$_POST['enrollment_id'];
+    if(ownedEnrollment($conn,$eid,$admin_id)){
+        $p=floatval($_POST['prelim']); $m=floatval($_POST['midterm']); $f=floatval($_POST['final']);
+        $avg=round(($p*0.25+$m*0.25+$f*0.50),2); $st=$avg>=75?'Passed':'Failed';
+        $chk=$conn->prepare("SELECT id FROM grades WHERE enrollment_id=?");
+        $chk->bind_param("i",$eid); $chk->execute(); $chk->store_result();
+        if($chk->num_rows>0){
+            $s=$conn->prepare("UPDATE grades SET prelim=?,midterm=?,final=?,average=?,status=? WHERE enrollment_id=?");
+            $s->bind_param("dddisi",$p,$m,$f,$avg,$st,$eid);
+        } else {
+            $s=$conn->prepare("INSERT INTO grades(enrollment_id,prelim,midterm,final,average,status) VALUES(?,?,?,?,?,?)");
+            $s->bind_param("idddis",$eid,$p,$m,$f,$avg,$st);
+        }
+        $s->execute();
+        $flash="Grades saved."; $ft='success';
+    } else { $flash="Unauthorized."; $ft='error'; }
+    header("Location: admin_dashboard.php?section=grades&flash=".urlencode($flash)."&ft=$ft"); exit();
+}
+
+// ════════════════════ FETCH ADMIN INFO ════════════════════
 $stmt=$conn->prepare("SELECT fullname FROM people WHERE id=?");
 $stmt->bind_param("i",$admin_id); $stmt->execute();
 $admin=$stmt->get_result()->fetch_assoc();
@@ -175,51 +261,94 @@ $search=$_GET['search']??'';
 $flash=isset($_GET['flash'])?htmlspecialchars(urldecode($_GET['flash'])):'';
 $flash_type=$_GET['ft']??'success';
 
+// ════════════════════ DATA QUERIES — all scoped to $admin_id ════════════════════
+
+// Students: only those enrolled in THIS admin's classes
 if($search){
-    $s=$conn->prepare("SELECT id,fullname,email FROM people WHERE role='user' AND fullname LIKE ? ORDER BY fullname");
-    $lk="%$search%"; $s->bind_param("s",$lk);
+    $s=$conn->prepare("SELECT DISTINCT p.id,p.fullname,p.email FROM people p JOIN enrollments e ON e.student_id=p.id JOIN classes c ON c.id=e.class_id WHERE p.role='user' AND c.teacher_id=? AND p.fullname LIKE ? ORDER BY p.fullname");
+    $lk="%$search%"; $s->bind_param("is",$admin_id,$lk);
 } else {
-    $s=$conn->prepare("SELECT id,fullname,email FROM people WHERE role='user' ORDER BY fullname");
+    $s=$conn->prepare("SELECT DISTINCT p.id,p.fullname,p.email FROM people p JOIN enrollments e ON e.student_id=p.id JOIN classes c ON c.id=e.class_id WHERE p.role='user' AND c.teacher_id=? ORDER BY p.fullname");
+    $s->bind_param("i",$admin_id);
 }
 $s->execute(); $students_arr=[]; $res=$s->get_result();
 while($r=$res->fetch_assoc()) $students_arr[]=$r;
+
+// All registered students (for the enroll picker — admins can enroll any user)
+$all_students_res=$conn->prepare("SELECT id,fullname,email FROM people WHERE role='user' ORDER BY fullname");
+$all_students_res->execute(); $all_students_arr=[];
+$allr=$all_students_res->get_result();
+while($r=$allr->fetch_assoc()) $all_students_arr[]=$r;
+
 $total_students=count($students_arr);
 
+// Classes — only this admin's
 $classes_arr=[];
-$res=$conn->query("SELECT id,class_name FROM classes ORDER BY class_name");
-while($r=$res->fetch_assoc()) $classes_arr[]=$r;
+$res=$conn->prepare("SELECT id,class_name FROM classes WHERE teacher_id=? ORDER BY class_name");
+$res->bind_param("i",$admin_id); $res->execute();
+$cr=$res->get_result(); while($r=$cr->fetch_assoc()) $classes_arr[]=$r;
 $total_classes=count($classes_arr);
 
+// Enrollments grouped by class — only this admin's classes
 $enrollments_by_class=[];
-$eq=$conn->query("SELECT e.id AS eid,e.class_id,e.student_id,p.id AS pid,p.fullname,p.email,c.class_name FROM enrollments e JOIN people p ON p.id=e.student_id JOIN classes c ON c.id=e.class_id ORDER BY c.class_name,p.fullname");
-if($eq){ while($r=$eq->fetch_assoc()){ $enrollments_by_class[$r['class_id']][]=$r; } }
+$eq=$conn->prepare("SELECT e.id AS eid,e.class_id,e.student_id,p.id AS pid,p.fullname,p.email,c.class_name FROM enrollments e JOIN people p ON p.id=e.student_id JOIN classes c ON c.id=e.class_id WHERE c.teacher_id=? ORDER BY c.class_name,p.fullname");
+$eq->bind_param("i",$admin_id); $eq->execute(); $eqr=$eq->get_result();
+if($eqr){ while($r=$eqr->fetch_assoc()){ $enrollments_by_class[$r['class_id']][]=$r; } }
 
-$grades_raw=$conn->query("SELECT e.id AS enrollment_id,p.fullname,c.class_name,COALESCE(g.prelim,0) AS prelim,COALESCE(g.midterm,0) AS midterm,COALESCE(g.final,0) AS final,COALESCE(g.average,0) AS average,COALESCE(g.status,'') AS status FROM enrollments e JOIN people p ON p.id=e.student_id JOIN classes c ON c.id=e.class_id LEFT JOIN grades g ON g.enrollment_id=e.id ORDER BY c.class_name,p.fullname");
+// Grades — only this admin's classes
+$grades_raw=$conn->prepare("SELECT e.id AS enrollment_id,p.fullname,c.class_name,COALESCE(g.prelim,0) AS prelim,COALESCE(g.midterm,0) AS midterm,COALESCE(g.final,0) AS final,COALESCE(g.average,0) AS average,COALESCE(g.status,'') AS status FROM enrollments e JOIN people p ON p.id=e.student_id JOIN classes c ON c.id=e.class_id LEFT JOIN grades g ON g.enrollment_id=e.id WHERE c.teacher_id=? ORDER BY c.class_name,p.fullname");
+$grades_raw->bind_param("i",$admin_id); $grades_raw->execute();
+$grades_result=$grades_raw->get_result();
 $grades_by_class=[];
-if($grades_raw){ while($r=$grades_raw->fetch_assoc()){ $grades_by_class[$r['class_name']][]=$r; } }
+if($grades_result){ while($r=$grades_result->fetch_assoc()){ $grades_by_class[$r['class_name']][]=$r; } }
 
-$result_activities=$conn->query("SELECT a.id AS activity_id,p.fullname,c.class_name,c.id AS class_id,a.activity_name,a.completed,e.id AS enrollment_id FROM enrollments e JOIN people p ON p.id=e.student_id JOIN classes c ON c.id=e.class_id JOIN activities a ON a.enrollment_id=e.id ORDER BY c.class_name,a.activity_name,p.fullname");
+// Activities — only this admin's classes
+$result_activities=$conn->prepare("SELECT a.id AS activity_id,p.fullname,c.class_name,c.id AS class_id,a.activity_name,a.completed,e.id AS enrollment_id FROM enrollments e JOIN people p ON p.id=e.student_id JOIN classes c ON c.id=e.class_id JOIN activities a ON a.enrollment_id=e.id WHERE c.teacher_id=? ORDER BY c.class_name,a.activity_name,p.fullname");
+$result_activities->bind_param("i",$admin_id); $result_activities->execute();
+$result_activities=$result_activities->get_result();
 
+// Reminders — only this admin's
 $col=$conn->query("SHOW COLUMNS FROM reminders LIKE 'class_id'");
 $has_class_id=($col&&$col->num_rows>0);
 if($has_class_id){
-    $result_reminders=$conn->query("SELECT r.*,c.class_name AS cls_name FROM reminders r LEFT JOIN classes c ON c.id=r.class_id ORDER BY r.created_at DESC");
+    $rq=$conn->prepare("SELECT r.*,c.class_name AS cls_name FROM reminders r LEFT JOIN classes c ON c.id=r.class_id WHERE r.created_by=? ORDER BY r.created_at DESC");
 } else {
-    $result_reminders=$conn->query("SELECT *,NULL AS cls_name,NULL AS class_id FROM reminders ORDER BY created_at DESC");
+    $rq=$conn->prepare("SELECT *,NULL AS cls_name,NULL AS class_id FROM reminders WHERE created_by=? ORDER BY created_at DESC");
 }
+$rq->bind_param("i",$admin_id); $rq->execute();
+$result_reminders=$rq->get_result();
 
-$total_enrollments=$conn->query("SELECT COUNT(*) c FROM enrollments")->fetch_assoc()['c'];
-$passed=$conn->query("SELECT COUNT(*) c FROM grades WHERE average>=75")->fetch_assoc()['c'];
-$failed=$conn->query("SELECT COUNT(*) c FROM grades WHERE average>0 AND average<75")->fetch_assoc()['c'];
-$comp_acts=$conn->query("SELECT COUNT(*) c FROM activities WHERE completed=1")->fetch_assoc()['c'];
-$pend_acts=$conn->query("SELECT COUNT(*) c FROM activities WHERE completed=0")->fetch_assoc()['c'];
-$total_reminders=$conn->query("SELECT COUNT(*) c FROM reminders")->fetch_assoc()['c'];
+// Overview stats — scoped to this admin's classes
+$total_enrollments=$conn->prepare("SELECT COUNT(*) c FROM enrollments e JOIN classes c ON c.id=e.class_id WHERE c.teacher_id=?");
+$total_enrollments->bind_param("i",$admin_id); $total_enrollments->execute();
+$total_enrollments=$total_enrollments->get_result()->fetch_assoc()['c'];
 
-$perf_result=$conn->query("SELECT p.fullname,p.email,COUNT(DISTINCT e.class_id) AS classes_count,ROUND(AVG(g.average),1) AS gpa,SUM(CASE WHEN g.average>=75 THEN 1 ELSE 0 END) AS passed_count,SUM(CASE WHEN g.average>0 AND g.average<75 THEN 1 ELSE 0 END) AS failed_count,SUM(CASE WHEN a.completed=1 THEN 1 ELSE 0 END) AS acts_done,COUNT(a.id) AS acts_total FROM people p LEFT JOIN enrollments e ON e.student_id=p.id LEFT JOIN grades g ON g.enrollment_id=e.id LEFT JOIN activities a ON a.enrollment_id=e.id WHERE p.role='user' GROUP BY p.id ORDER BY gpa DESC");
+$passed=$conn->prepare("SELECT COUNT(*) c FROM grades g JOIN enrollments e ON e.id=g.enrollment_id JOIN classes c ON c.id=e.class_id WHERE c.teacher_id=? AND g.average>=75");
+$passed->bind_param("i",$admin_id); $passed->execute(); $passed=$passed->get_result()->fetch_assoc()['c'];
 
+$failed=$conn->prepare("SELECT COUNT(*) c FROM grades g JOIN enrollments e ON e.id=g.enrollment_id JOIN classes c ON c.id=e.class_id WHERE c.teacher_id=? AND g.average>0 AND g.average<75");
+$failed->bind_param("i",$admin_id); $failed->execute(); $failed=$failed->get_result()->fetch_assoc()['c'];
+
+$comp_acts=$conn->prepare("SELECT COUNT(*) c FROM activities a JOIN enrollments e ON e.id=a.enrollment_id JOIN classes c ON c.id=e.class_id WHERE c.teacher_id=? AND a.completed=1");
+$comp_acts->bind_param("i",$admin_id); $comp_acts->execute(); $comp_acts=$comp_acts->get_result()->fetch_assoc()['c'];
+
+$pend_acts=$conn->prepare("SELECT COUNT(*) c FROM activities a JOIN enrollments e ON e.id=a.enrollment_id JOIN classes c ON c.id=e.class_id WHERE c.teacher_id=? AND a.completed=0");
+$pend_acts->bind_param("i",$admin_id); $pend_acts->execute(); $pend_acts=$pend_acts->get_result()->fetch_assoc()['c'];
+
+$total_reminders_q=$conn->prepare("SELECT COUNT(*) c FROM reminders WHERE created_by=?");
+$total_reminders_q->bind_param("i",$admin_id); $total_reminders_q->execute();
+$total_reminders=$total_reminders_q->get_result()->fetch_assoc()['c'];
+
+// Performance — students in THIS admin's classes
+$perf_result=$conn->prepare("SELECT p.fullname,p.email,COUNT(DISTINCT e.class_id) AS classes_count,ROUND(AVG(g.average),1) AS gpa,SUM(CASE WHEN g.average>=75 THEN 1 ELSE 0 END) AS passed_count,SUM(CASE WHEN g.average>0 AND g.average<75 THEN 1 ELSE 0 END) AS failed_count,SUM(CASE WHEN a.completed=1 THEN 1 ELSE 0 END) AS acts_done,COUNT(a.id) AS acts_total FROM people p JOIN enrollments e ON e.student_id=p.id JOIN classes c ON c.id=e.class_id AND c.teacher_id=? LEFT JOIN grades g ON g.enrollment_id=e.id LEFT JOIN activities a ON a.enrollment_id=e.id WHERE p.role='user' GROUP BY p.id ORDER BY gpa DESC");
+$perf_result->bind_param("i",$admin_id); $perf_result->execute();
+$perf_result=$perf_result->get_result();
+
+// Analytics charts — scoped to this admin's classes
 $chart_classes=[]; $chart_avgs=[]; $enroll_per_class=[];
-$tmp=$conn->query("SELECT c.class_name,ROUND(AVG(g.average),1) AS avg,COUNT(DISTINCT e.id) AS ecnt FROM classes c LEFT JOIN enrollments e ON e.class_id=c.id LEFT JOIN grades g ON g.enrollment_id=e.id GROUP BY c.id ORDER BY c.class_name");
-while($r=$tmp->fetch_assoc()){ $chart_classes[]=$r['class_name']; $chart_avgs[]=$r['avg']??0; $enroll_per_class[]=$r['ecnt']; }
+$tmp=$conn->prepare("SELECT c.class_name,ROUND(AVG(g.average),1) AS avg,COUNT(DISTINCT e.id) AS ecnt FROM classes c LEFT JOIN enrollments e ON e.class_id=c.id LEFT JOIN grades g ON g.enrollment_id=e.id WHERE c.teacher_id=? GROUP BY c.id ORDER BY c.class_name");
+$tmp->bind_param("i",$admin_id); $tmp->execute(); $tmpr=$tmp->get_result();
+while($r=$tmpr->fetch_assoc()){ $chart_classes[]=$r['class_name']; $chart_avgs[]=$r['avg']??0; $enroll_per_class[]=$r['ecnt']; }
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -417,7 +546,7 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
 .act-row.done    .act-dot{background:#2ecc71;box-shadow:0 0 5px rgba(46,204,113,.55);}
 .act-row.pending .act-dot{background:#ffd32a;box-shadow:0 0 5px rgba(255,211,42,.55);}
 .act-student-name{font-weight:700;font-size:.86rem;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-/* status pill — pinned to the right, always same width */
+/* status pill */
 .act-status-pill{
   flex-shrink:0;
   display:inline-flex;align-items:center;gap:5px;
@@ -526,7 +655,6 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
 .grp-body table th:nth-child(5), .grp-body table td:nth-child(5) { width:12%; }
 .grp-body table th:nth-child(6), .grp-body table td:nth-child(6) { width:14%; }
 .grp-body table th:nth-child(7), .grp-body table td:nth-child(7) { width:10%; }
-
 </style>
 </head>
 <body>
@@ -576,8 +704,8 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
 <div class="section <?php echo $active_section=='overview'?'active':''; ?>">
   <div class="sec-title"><i class="fas fa-tachometer-alt"></i> Dashboard Overview</div>
   <div class="stats-grid">
-    <div class="stat-card c-blue"><div class="stat-icon"><i class="fas fa-users"></i></div><div class="stat-val"><?php echo $total_students; ?></div><div class="stat-lbl">Students</div></div>
-    <div class="stat-card c-blue"><div class="stat-icon"><i class="fas fa-chalkboard"></i></div><div class="stat-val"><?php echo $total_classes; ?></div><div class="stat-lbl">Classes</div></div>
+    <div class="stat-card c-blue"><div class="stat-icon"><i class="fas fa-users"></i></div><div class="stat-val"><?php echo $total_students; ?></div><div class="stat-lbl">My Students</div></div>
+    <div class="stat-card c-blue"><div class="stat-icon"><i class="fas fa-chalkboard"></i></div><div class="stat-val"><?php echo $total_classes; ?></div><div class="stat-lbl">My Classes</div></div>
     <div class="stat-card c-teal"><div class="stat-icon"><i class="fas fa-user-check"></i></div><div class="stat-val"><?php echo $total_enrollments; ?></div><div class="stat-lbl">Enrollments</div></div>
     <div class="stat-card c-green"><div class="stat-icon"><i class="fas fa-check-circle"></i></div><div class="stat-val"><?php echo $passed; ?></div><div class="stat-lbl">Passed</div></div>
     <div class="stat-card c-red"><div class="stat-icon"><i class="fas fa-times-circle"></i></div><div class="stat-val"><?php echo $failed; ?></div><div class="stat-lbl">Failed</div></div>
@@ -594,7 +722,7 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
 
 <!-- STUDENTS -->
 <div class="section <?php echo $active_section=='students'?'active':''; ?>">
-  <div class="sec-title"><i class="fas fa-users"></i> Students</div>
+  <div class="sec-title"><i class="fas fa-users"></i> My Students</div>
   <form method="GET" style="margin-bottom:13px;"><input type="hidden" name="section" value="students">
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <input type="text" name="search" placeholder="Search by name..." value="<?php echo htmlspecialchars($search); ?>" style="padding:8px 11px;border-radius:8px;border:1px solid var(--ibdr);background:var(--ibg);color:var(--txt);font-family:'Rajdhani',sans-serif;font-size:.88rem;outline:none;width:250px;">
@@ -606,13 +734,13 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
     <?php foreach($students_arr as $i=>$row): ?>
     <tr><td><?php echo $i+1; ?></td><td style="text-align:left;"><?php echo htmlspecialchars($row['fullname']); ?></td><td><?php echo htmlspecialchars($row['email']); ?></td></tr>
     <?php endforeach; ?>
-    <?php if(empty($students_arr)): ?><tr><td colspan="3" style="text-align:center;color:var(--muted);padding:20px;">No students found.</td></tr><?php endif; ?>
+    <?php if(empty($students_arr)): ?><tr><td colspan="3" style="text-align:center;color:var(--muted);padding:20px;">No students found in your classes.</td></tr><?php endif; ?>
   </table></div>
 </div>
 
 <!-- CLASSES -->
 <div class="section <?php echo $active_section=='classes'?'active':''; ?>">
-  <div class="sec-title"><i class="fas fa-chalkboard"></i> Class Management</div>
+  <div class="sec-title"><i class="fas fa-chalkboard"></i> My Classes</div>
   <div class="card">
     <div class="card-title"><i class="fas fa-plus-circle"></i> Add New Class</div>
     <form method="POST" action="admin_dashboard.php">
@@ -623,8 +751,8 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
     </form>
   </div>
   <div class="card">
-    <div class="card-title"><i class="fas fa-user-plus"></i> Enroll Students in Class</div>
-    <p class="info-note"><i class="fas fa-info-circle"></i> Pick a class, tick students, click <strong>Enroll Selected</strong>. Already-enrolled are skipped.</p>
+    <div class="card-title"><i class="fas fa-user-plus"></i> Enroll Students in My Classes</div>
+    <p class="info-note"><i class="fas fa-info-circle"></i> Pick one of your classes, tick students, click <strong>Enroll Selected</strong>. Already-enrolled are skipped.</p>
     <form id="enrollForm">
       <div class="enroll-wrap">
         <div class="enroll-top">
@@ -643,9 +771,9 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
           </div>
         </div>
         <div class="chk-list" id="chk_list">
-          <?php if(empty($students_arr)): ?>
+          <?php if(empty($all_students_arr)): ?>
           <div class="chk-empty"><i class="fas fa-users"></i>No students registered yet.</div>
-          <?php else: foreach($students_arr as $st): ?>
+          <?php else: foreach($all_students_arr as $st): ?>
           <div class="chk-row" data-name="<?php echo strtolower(htmlspecialchars($st['fullname'])); ?>" onclick="toggleChk(this)">
             <input type="checkbox" name="student_ids[]" value="<?php echo $st['id']; ?>">
             <div class="chk-box"><i class="fas fa-check"></i></div>
@@ -663,7 +791,6 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
         <div class="enroll-footer">
           <span class="sel-cnt" id="sel_cnt">0 students selected</span>
           <button type="button" class="btn btn-primary" onclick="submitEnroll()"><i class="fas fa-user-plus"></i> Enroll Selected</button>
-          <div id="enroll-result" style="font-size:.84rem;font-weight:600;padding:6px 10px;border-radius:8px;display:none;margin-top:8px;"></div>
         </div>
       </div>
     </form>
@@ -672,7 +799,7 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
     <div class="card-title"><i class="fas fa-users-cog"></i> Enrolled Students — Manage by Class</div>
     <p class="info-note"><i class="fas fa-info-circle"></i> Click a class to expand, edit student info or remove them.</p>
     <?php if(empty($classes_arr)): ?>
-    <div class="no-data"><i class="fas fa-chalkboard"></i>No classes yet.</div>
+    <div class="no-data"><i class="fas fa-chalkboard"></i>You have no classes yet.</div>
     <?php else: foreach($classes_arr as $cls): $enrolled=$enrollments_by_class[$cls['id']]??[]; $ecnt=count($enrolled); ?>
     <div class="cls-block">
       <div class="cls-block-head" onclick="toggleBlk(<?php echo $cls['id']; ?>)">
@@ -719,7 +846,7 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
 <div class="section <?php echo $active_section=='grades'?'active':''; ?>">
   <div class="sec-title"><i class="fas fa-graduation-cap"></i> Grades Management</div>
   <?php if(empty($grades_by_class)): ?>
-  <div class="card" style="text-align:center;padding:28px;color:var(--muted);"><i class="fas fa-graduation-cap" style="font-size:2rem;display:block;margin-bottom:10px;opacity:.3;"></i>No enrollments yet.</div>
+  <div class="card" style="text-align:center;padding:28px;color:var(--muted);"><i class="fas fa-graduation-cap" style="font-size:2rem;display:block;margin-bottom:10px;opacity:.3;"></i>No enrollments in your classes yet.</div>
   <?php else: foreach($grades_by_class as $class_name => $rows):
     $avgs=array_filter(array_column($rows,'average')); $cavg=count($avgs)?round(array_sum($avgs)/count($avgs),1):null;
     $cclr=$cavg===null?'rgba(79,172,254,.12)':($cavg>=75?'rgba(46,204,113,.14)':'rgba(255,107,129,.14)');
@@ -758,12 +885,12 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
   <?php endforeach; endif; ?>
 </div>
 
-<!-- ACTIVITIES — redesigned with perfectly aligned status pills -->
+<!-- ACTIVITIES -->
 <div class="section <?php echo $active_section=='activities'?'active':''; ?>">
   <div class="sec-title"><i class="fas fa-tasks"></i> Activity Management</div>
   <div class="card">
     <div class="card-title"><i class="fas fa-paper-plane"></i> Assign Activity to Entire Class</div>
-    <p class="info-note"><i class="fas fa-info-circle"></i> Select a class — activity is assigned to <strong>all enrolled students</strong> automatically.</p>
+    <p class="info-note"><i class="fas fa-info-circle"></i> Select one of your classes — activity is assigned to <strong>all enrolled students</strong> automatically.</p>
     <form method="POST" action="admin_dashboard.php">
       <div class="form-grid">
         <div class="field"><label>Class *</label>
@@ -777,14 +904,13 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
     </form>
   </div>
   <?php
-  $result_activities->data_seek(0);
   $acts_by_class=[];
   while($row=$result_activities->fetch_assoc()){
     $acts_by_class[$row['class_name']][$row['activity_name']][]=$row;
   }
   ?>
   <?php if(empty($acts_by_class)): ?>
-  <div class="card" style="text-align:center;padding:28px;color:var(--muted);"><i class="fas fa-tasks" style="font-size:2rem;display:block;margin-bottom:10px;opacity:.3;"></i>No activities assigned yet.</div>
+  <div class="card" style="text-align:center;padding:28px;color:var(--muted);"><i class="fas fa-tasks" style="font-size:2rem;display:block;margin-bottom:10px;opacity:.3;"></i>No activities assigned in your classes yet.</div>
   <?php else: foreach($acts_by_class as $cls_name => $acts_grouped):
     $all_rows=array_merge(...array_values($acts_grouped));
     $done_c=count(array_filter($all_rows,fn($a)=>$a['completed']));
@@ -855,24 +981,19 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
 
 <!-- REMINDERS -->
 <div class="section <?php echo $active_section=='reminders'?'active':''; ?>">
-  <div class="sec-title"><i class="fas fa-bell"></i> Reminders</div>
+  <div class="sec-title"><i class="fas fa-bell"></i> My Reminders</div>
   <div class="card">
     <div class="card-title"><i class="fas fa-plus-circle"></i> Post New Reminder</div>
     <form method="POST" action="admin_dashboard.php">
       <div class="form-grid">
         <div class="field fg-full"><label>Title *</label><input type="text" name="reminder_title" placeholder="e.g. Midterm Exam on Friday" required></div>
         <div class="field fg-full"><label>Message Body</label><textarea name="reminder_body" placeholder="Describe the reminder..."></textarea></div>
-        <div class="field"><label>Target Audience</label>
-          <select name="target_role">
-            <option value="user">Students Only</option>
-            <option value="admin">Admins Only</option>
-            <option value="all">Everyone</option>
-          </select>
-        </div>
+        <!-- Target audience is always students — hidden field -->
+        <input type="hidden" name="target_role" value="user">
         <?php if($has_class_id): ?>
         <div class="field"><label>Target Class (optional)</label>
           <select name="reminder_class_id">
-            <option value="">— All Students —</option>
+            <option value="">— All My Students —</option>
             <?php foreach($classes_arr as $r): ?><option value="<?php echo $r['id']; ?>"><?php echo htmlspecialchars($r['class_name']); ?></option><?php endforeach; ?>
           </select>
         </div>
@@ -883,7 +1004,6 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
     </form>
   </div>
   <?php
-  $result_reminders->data_seek(0);
   $rems_global=[]; $rems_by_class=[];
   while($row=$result_reminders->fetch_assoc()){
     if(!empty($row['class_id'])) $rems_by_class[$row['cls_name']??'Unknown'][]=$row;
@@ -894,7 +1014,7 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
   <div class="grp-block">
     <div class="grp-head green">
       <i class="fas fa-users" style="color:#2ecc71;"></i>
-      <span class="grp-name green">All Students — Global</span>
+      <span class="grp-name green">General — All Students</span>
       <span class="grp-tag" style="background:rgba(46,204,113,.14);color:#2ecc71;"><?php echo count($rems_global); ?> reminder<?php echo count($rems_global)!=1?'s':''; ?></span>
     </div>
     <div style="padding:10px 14px;">
@@ -945,13 +1065,13 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
   </div>
   <?php endforeach; ?>
   <?php if(empty($rems_global)&&empty($rems_by_class)): ?>
-  <div class="card" style="text-align:center;padding:28px;color:var(--muted);"><i class="fas fa-bell-slash" style="font-size:2rem;display:block;margin-bottom:10px;opacity:.3;"></i>No reminders yet.</div>
+  <div class="card" style="text-align:center;padding:28px;color:var(--muted);"><i class="fas fa-bell-slash" style="font-size:2rem;display:block;margin-bottom:10px;opacity:.3;"></i>You have no reminders yet.</div>
   <?php endif; ?>
 </div>
 
 <!-- PERFORMANCE -->
 <div class="section <?php echo $active_section=='performance'?'active':''; ?>">
-  <div class="sec-title"><i class="fas fa-chart-line"></i> Full Student Performance</div>
+  <div class="sec-title"><i class="fas fa-chart-line"></i> My Students' Performance</div>
   <div class="card"><table>
     <tr><th>Student</th><th>Classes</th><th>GPA</th><th>Passed</th><th>Failed</th><th>Acts Done</th><th>Act Rate</th><th>Grade Bar</th><th>Overall</th></tr>
     <?php while($row=$perf_result->fetch_assoc()):
@@ -977,7 +1097,7 @@ input[type="checkbox"]{accent-color:var(--ap);width:14px;height:14px;cursor:poin
 
 <!-- ANALYTICS -->
 <div class="section <?php echo $active_section=='analytics'?'active':''; ?>">
-  <div class="sec-title"><i class="fas fa-chart-bar"></i> Analytics</div>
+  <div class="sec-title"><i class="fas fa-chart-bar"></i> My Analytics</div>
   <div class="chart-grid">
     <div class="chart-card"><h3><i class="fas fa-chart-bar"></i> Class Average Grades</h3><canvas id="barB" height="220"></canvas></div>
     <div class="chart-card"><h3><i class="fas fa-chart-pie"></i> Pass vs Fail</h3><canvas id="doB" height="220"></canvas></div>
@@ -1029,7 +1149,6 @@ function applyAccent(c){R.style.setProperty('--ap',c);localStorage.setItem('paop
 function setAccent(c){applyAccent(c);}
 function openModal(){document.getElementById('themeModal').classList.add('open');}
 function closeModal(){document.getElementById('themeModal').classList.remove('open');}
-/* theme already applied by <head> script — just sync the buttons */
 (function(){
   applyTheme(localStorage.getItem('paops_theme')||'dark');
   applyAccent(localStorage.getItem('paops_accent')||'#4facfe');
@@ -1074,81 +1193,172 @@ function buildPager(pages){
 }
 function toggleChk(row){const cb=row.querySelector('input[type="checkbox"]');const on=!row.classList.contains('checked');row.classList.toggle('checked',on);cb.checked=on;updateCnt();}
 function updateCnt(){const n=document.querySelectorAll('.chk-row.checked').length;const el=document.getElementById('sel_cnt');if(el)el.textContent=n+' student'+(n===1?'':'s')+' selected';}
-function pickAll(v){getVisible().forEach(r=>{r.classList.toggle('checked',v);const cb=r.querySelector('input[type="checkbox"]');if(cb)cb.checked=v;});updateCnt();}
+function pickAll(v){getRows().forEach(r=>{r.classList.toggle('checked',v);const cb=r.querySelector('input[type="checkbox"]');if(cb)cb.checked=v;});updateCnt();}
 function enrollSearch(q){enrollQuery=q;renderPage(1);}
 document.addEventListener('DOMContentLoaded',()=>renderPage(1));
 function toggleBlk(id){const b=document.getElementById('blk-'+id);const ic=document.getElementById('blk-icon-'+id);const op=b.classList.contains('open');b.classList.toggle('open',!op);ic.style.transform=op?'':'rotate(180deg)';}
 function toggleEdit(eid){document.getElementById('edit-'+eid).classList.toggle('open');}
+// Remove flash params from URL immediately so refreshing won't re-show the message
+(function(){
+  const url = new URL(window.location.href);
+  if(url.searchParams.has('flash') || url.searchParams.has('ft')){
+    url.searchParams.delete('flash');
+    url.searchParams.delete('ft');
+    window.history.replaceState(null, '', url.toString());
+  }
+})();
+
+// Auto-fade the flash message after 4.5 s
 setTimeout(()=>{const f=document.querySelector('.flash');if(f){f.style.transition='opacity .5s';f.style.opacity='0';}},4500);
 
+function showResult(el, isError, msg){
+  // Show as a top-of-page flash, same as PHP flash messages
+  let toast = document.getElementById('enroll-toast');
+  if(!toast){
+    toast = document.createElement('div');
+    toast.id = 'enroll-toast';
+    // Insert before the first section div inside .main
+    const main = document.querySelector('.main');
+    const firstSection = main.querySelector('.section');
+    main.insertBefore(toast, firstSection);
+  }
+  toast.className = 'flash ' + (isError ? 'error' : 'success');
+  toast.innerHTML = '<i class="fas ' + (isError ? 'fa-exclamation-circle' : 'fa-check-circle') + '"></i> ' + msg;
+  toast.style.display = 'flex';
+  // Scroll to top so user sees it
+  document.querySelector('.main').scrollTo({top: 0, behavior: 'smooth'});
+  clearTimeout(toast._hideTimer);
+  toast._hideTimer = setTimeout(() => {
+    toast.style.transition = 'opacity .5s';
+    toast.style.opacity = '0';
+    setTimeout(() => {
+      toast.style.display = 'none';
+      toast.style.opacity = '1';
+    }, 500);
+  }, 4000);
+}
+
+function buildStudentCard(s){
+  /* Mirrors the .smr-row PHP markup so the card looks identical */
+  return `
+  <div class="smr-row" id="smr-eid-${s.eid}">
+    <div class="smr-av"><i class="fas fa-user-graduate"></i></div>
+    <div class="smr-info">
+      <div class="smr-name">${s.fullname}</div>
+      <div class="smr-email">${s.email}</div>
+    </div>
+    <div style="display:flex;gap:6px;flex-shrink:0;">
+      <button type="button" class="btn btn-warn btn-sm" onclick="toggleEdit(${s.eid})"><i class="fas fa-pen"></i> Edit</button>
+      <form method="POST" action="admin_dashboard.php"
+            onsubmit="return confirm('Remove ${s.fullname.replace(/'/g,"\\'")} from this class?');" style="display:inline;">
+        <input type="hidden" name="enrollment_id" value="${s.eid}">
+        <button type="submit" name="unenroll_student" value="1" class="btn btn-danger btn-sm"><i class="fas fa-user-minus"></i> Remove</button>
+      </form>
+    </div>
+    <div class="smr-edit" id="edit-${s.eid}">
+      <form method="POST" action="admin_dashboard.php"
+            style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;width:100%;">
+        <input type="hidden" name="person_id" value="${s.pid}">
+        <input type="text"  name="fullname" value="${s.fullname}" required placeholder="Full Name">
+        <input type="email" name="email"    value="${s.email}"    required placeholder="Email">
+        <button type="submit" name="update_student" value="1" class="btn btn-save btn-sm"><i class="fas fa-save"></i> Save</button>
+        <button type="button" class="btn btn-sm"
+                style="background:rgba(255,255,255,.08);color:var(--muted);"
+                onclick="toggleEdit(${s.eid})">Cancel</button>
+      </form>
+    </div>
+  </div>`;
+}
+
+function injectStudents(classId, students){
+  const body = document.getElementById('blk-' + classId);
+  if(!body) return;
+
+  // Remove "no students" placeholder if present
+  const noData = body.querySelector('.no-data');
+  if(noData) noData.remove();
+
+  students.forEach(s => {
+    // Skip if already present (shouldn't happen but be safe)
+    if(document.getElementById('smr-eid-' + s.eid)) return;
+    body.insertAdjacentHTML('beforeend', buildStudentCard(s));
+  });
+
+  // Update the count badge in the header
+  const badge = document.querySelector(`#blk-icon-${classId}`)
+                  ?.closest('.cls-block-head')
+                  ?.querySelector('.cb-cnt');
+  if(badge){
+    const current = body.querySelectorAll('.smr-row').length;
+    badge.textContent = current + ' student' + (current !== 1 ? 's' : '');
+  }
+
+  // Auto-expand the class block so the user sees the new student immediately
+  if(!body.classList.contains('open')){
+    body.classList.add('open');
+    const ic = document.getElementById('blk-icon-' + classId);
+    if(ic) ic.style.transform = 'rotate(180deg)';
+  }
+}
+
+function clearAllChecked(){
+  document.querySelectorAll('#chk_list .chk-row.checked').forEach(r => {
+    r.classList.remove('checked');
+    const cb = r.querySelector('input[type="checkbox"]');
+    if(cb) cb.checked = false;
+  });
+  updateCnt();
+}
+
 function submitEnroll(){
-  const form = document.getElementById('enrollForm');
-  const classId = form.querySelector('select[name="class_id"]').value;
-  const checked = form.querySelectorAll('input[name="student_ids[]"]:checked');
-  const result = document.getElementById('enroll-result');
+  const form        = document.getElementById('enrollForm');
+  const classId     = form.querySelector('select[name="class_id"]').value;
+  const checkedRows = document.querySelectorAll('#chk_list .chk-row.checked');
 
   if(!classId){
-    result.style.display='block';
-    result.style.background='rgba(255,71,87,.13)';
-    result.style.border='1px solid rgba(255,71,87,.3)';
-    result.style.color='#ff6b81';
-    result.textContent='⚠ Please select a class.';
-    return;
+    showResult(null, true, 'Please select a class.'); return;
   }
-  if(checked.length===0){
-    result.style.display='block';
-    result.style.background='rgba(255,71,87,.13)';
-    result.style.border='1px solid rgba(255,71,87,.3)';
-    result.style.color='#ff6b81';
-    result.textContent='⚠ Please select at least one student.';
-    return;
+  if(checkedRows.length === 0){
+    showResult(null, true, 'Please select at least one student.'); return;
   }
+
+  // Show loading indicator as top flash
+  const toast = document.getElementById('enroll-toast') || (() => {
+    const t = document.createElement('div');
+    t.id = 'enroll-toast';
+    const main = document.querySelector('.main');
+    main.insertBefore(t, main.querySelector('.section'));
+    return t;
+  })();
+  toast.className   = 'flash';
+  toast.style.cssText = 'display:flex;background:rgba(79,172,254,.10);border:1px solid rgba(79,172,254,.25);color:#4facfe;';
+  toast.innerHTML   = '<i class="fas fa-spinner fa-spin"></i> &nbsp;Enrolling…';
+  document.querySelector('.main').scrollTo({top:0, behavior:'smooth'});
 
   const data = new FormData();
   data.append('class_id', classId);
   data.append('enroll_student', '1');
-  checked.forEach(cb => data.append('student_ids[]', cb.value));
-
-  result.style.display='block';
-  result.style.background='rgba(79,172,254,.10)';
-  result.style.border='1px solid rgba(79,172,254,.25)';
-  result.style.color='#4facfe';
-  result.textContent='Enrolling...';
+  data.append('ajax', '1');
+  checkedRows.forEach(row => {
+    const cb = row.querySelector('input[name="student_ids[]"]');
+    if(cb) data.append('student_ids[]', cb.value);
+  });
 
   fetch('admin_dashboard.php', {method:'POST', body:data})
-    .then(r => r.text())
-    .then(html => {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(html, 'text/html');
-      const flashEl = doc.querySelector('.flash');
-      const msg = flashEl ? flashEl.textContent.trim() : 'Done!';
-      const isError = flashEl && flashEl.classList.contains('error');
-
-      result.style.background = isError ? 'rgba(255,71,87,.13)' : 'rgba(46,204,113,.13)';
-      result.style.border = isError ? '1px solid rgba(255,71,87,.3)' : '1px solid rgba(46,204,113,.3)';
-      result.style.color = isError ? '#ff6b81' : '#2ecc71';
-      result.textContent = (isError ? '✗ ' : '✓ ') + msg;
-
-      // uncheck all selected students
-      if(!isError){
-        form.querySelectorAll('.chk-row.checked').forEach(r=>{
-          r.classList.remove('checked');
-          const cb=r.querySelector('input[type="checkbox"]');
-          if(cb) cb.checked=false;
-        });
-        updateCnt();
+    .then(r => r.json())
+    .then(json => {
+      clearAllChecked();
+      form.querySelector('select[name="class_id"]').value = '';
+      if(json.ok && json.enrolled && json.enrolled.length > 0){
+        injectStudents(json.class_id, json.enrolled);
       }
-
-      setTimeout(()=>{ result.style.display='none'; }, 4000);
+      showResult(null, !json.ok, json.msg);
     })
-    .catch(()=>{
-      result.style.background='rgba(255,71,87,.13)';
-      result.style.border='1px solid rgba(255,71,87,.3)';
-      result.style.color='#ff6b81';
-      result.textContent='✗ Network error. Please try again.';
+    .catch(() => {
+      clearAllChecked();
+      showResult(null, true, 'Network error. Please try again.');
     });
 }
-
 </script>
 </body>
 </html>
